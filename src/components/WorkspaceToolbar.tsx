@@ -457,14 +457,26 @@ export const WorkspaceToolbar: React.FC<WorkspaceToolbarProps> = ({
             <AlertCircle className="w-4 h-4 text-red-600 dark:text-red-400 shrink-0" />
             <span className="font-medium truncate">{alertText}</span>
           </div>
-          <button
-            type="button"
-            onClick={onDismissSysexStatus}
-            title="Dismiss alert"
-            className="p-1 text-red-600 dark:text-red-300 hover:bg-red-100 dark:hover:bg-red-900/50 rounded shrink-0"
-          >
-            <X className="w-3.5 h-3.5" />
-          </button>
+          <div className="flex items-center gap-2 shrink-0">
+            {(connectionPhase === 'error' || connectionPhase === 'sysex_blocked') &&
+              midiSupported && (
+                <button
+                  type="button"
+                  onClick={onScanPorts}
+                  className="px-2.5 py-1 text-[11px] font-semibold rounded border border-red-300 dark:border-red-700 bg-white dark:bg-red-900/40 text-red-800 dark:text-red-100 hover:bg-red-100 dark:hover:bg-red-900/70 whitespace-nowrap transition-colors"
+                >
+                  Retry Permission
+                </button>
+              )}
+            <button
+              type="button"
+              onClick={onDismissSysexStatus}
+              title="Dismiss alert"
+              className="p-1 text-red-600 dark:text-red-300 hover:bg-red-100 dark:hover:bg-red-900/50 rounded shrink-0"
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
+          </div>
         </div>
       )}
     </div>

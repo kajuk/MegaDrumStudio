@@ -98,6 +98,20 @@ export function useWebMidi(options: UseWebMidiOptions = {}) {
   selectedOutputIdRef.current = selectedOutputId;
   const callbacksRef = useRef(options);
   callbacksRef.current = options;
+  const inFlightAccessRef = useRef<Promise<{
+    access: MIDIAccess;
+    hasSysex: boolean;
+    nextInputs: MidiPortInfo[];
+    nextOutputs: MidiPortInfo[];
+    chosenIn: string;
+    chosenOut: string;
+  }> | null>(null);
+  const hadGrantedAccessRef = useRef<boolean>(false);
+  const addonRetryOnFocusRef = useRef<boolean>(false);
+  const connectedRef = useRef<boolean>(false);
+  connectedRef.current = connected;
+  const sysexAllowedRef = useRef<boolean>(false);
+  sysexAllowedRef.current = sysexAllowed;
 
   useEffect(() => {
     try {
@@ -159,6 +173,75 @@ export function useWebMidi(options: UseWebMidiOptions = {}) {
     []
   );
 
+  const invalidateMidiAccess = useCallback(
+    (reasonMessage?: string) => {
+      cancelAllWaiters();
+      busyRef.current = false;
+      if (accessRef.current) {
+        accessRef.current.onstatechange = null;
+        accessRef.current.inputs.forEach((input) => {
+          input.onmidimessage = null;
+        });
+        accessRef.current = null;
+      }
+      setHasMidiAccess(false);
+      setSysexAllowed(false);
+      setInputs([]);
+      setOutputs([]);
+      if (connectedRef.current) {
+        setConnected(false);
+      }
+      if (reasonMessage) {
+        setPermissionError(reasonMessage);
+        setSysexStatus({ code: 'error', message: reasonMessage });
+      }
+    },
+    [cancelAllWaiters]
+  );
+
+  const queryMidiPermissionStatus = useCallback(async (): Promise<PermissionStatus | null> => {
+    if (typeof navigator === 'undefined' || !navigator.permissions?.query) return null;
+    try {
+      return await navigator.permissions.query({
+        name: 'midi' as PermissionName,
+        sysex: true,
+      } as PermissionDescriptor);
+    } catch {
+      try {
+        return await navigator.permissions.query({
+          name: 'midi' as PermissionName,
+        } as PermissionDescriptor);
+      } catch {
+        return null;
+      }
+    }
+  }, []);
+
+  const formatMidiAccessError = useCallback((err: unknown): { message: string; isAddonError: boolean } => {
+    const rawMsg = err instanceof Error ? err.message : '';
+    const lower = rawMsg.toLowerCase();
+    const isAddonError =
+      lower.includes('add-on') || lower.includes('addon') || lower.includes('site permission');
+
+    if (isAddonError) {
+      return {
+        isAddonError: true,
+        message:
+          'WebMIDI requires a site permission add-on to activate. Allow or install the browser add-on prompt, then click Retry Permission or Connect MIDI.',
+      };
+    }
+    if (rawMsg) {
+      return {
+        isAddonError: false,
+        message: `MIDI access failed: ${rawMsg}`,
+      };
+    }
+    return {
+      isAddonError: false,
+      message: 'MIDI permission denied. Open in a standalone tab and allow MIDI access.',
+    };
+  }, []);
+
   const refreshPorts = useCallback((access: MIDIAccess) => {
     const nextInputs: MidiPortInfo[] = [];
     const nextOutputs: MidiPortInfo[] = [];
@@ -204,29 +287,57 @@ export function useWebMidi(options: UseWebMidiOptions = {}) {
   }, []);
 
   const requestAccessAndRefresh = useCallback(async () => {
-    if (accessRef.current && sysexAllowed) {
-      const ports = refreshPorts(accessRef.current);
-      return { access: accessRef.current, hasSysex: true, ...ports };
+    if (accessRef.current && sysexAllowedRef.current) {
+      const permStatus = await queryMidiPermissionStatus();
+      if (!permStatus || permStatus.state === 'granted') {
+        const ports = refreshPorts(accessRef.current);
+        return { access: accessRef.current, hasSysex: true, ...ports };
+      }
+      // Cached MIDIAccess is stale because permission was revoked
+      invalidateMidiAccess();
     }
 
-    let access: MIDIAccess;
-    let hasSysex = true;
+    if (inFlightAccessRef.current) {
+      return inFlightAccessRef.current;
+    }
+
+    const requestPromise = (async () => {
+      let access: MIDIAccess;
+      let hasSysex = true;
+      try {
+        access = await navigator.requestMIDIAccess({ sysex: true });
+      } catch (sysexErr) {
+        const errMsg = sysexErr instanceof Error ? sysexErr.message.toLowerCase() : '';
+        // In Firefox, WebMIDI requires a site permission add-on for all MIDI access;
+        // don't overwrite/cancel the add-on prompt with a second { sysex: false } call.
+        if (errMsg.includes('add-on') || errMsg.includes('addon') || errMsg.includes('site permission')) {
+          throw sysexErr;
+        }
+        access = await navigator.requestMIDIAccess({ sysex: false });
+        hasSysex = false;
+      }
+
+      accessRef.current = access;
+      hadGrantedAccessRef.current = true;
+      addonRetryOnFocusRef.current = false;
+      setHasMidiAccess(true);
+      setSysexAllowed(hasSysex);
+
+      const ports = refreshPorts(access);
+      access.onstatechange = () => refreshPorts(access);
+
+      return { access, hasSysex, ...ports };
+    })();
+
+    inFlightAccessRef.current = requestPromise;
     try {
-      access = await navigator.requestMIDIAccess({ sysex: true });
-    } catch {
-      access = await navigator.requestMIDIAccess({ sysex: false });
-      hasSysex = false;
+      return await requestPromise;
+    } finally {
+      if (inFlightAccessRef.current === requestPromise) {
+        inFlightAccessRef.current = null;
+      }
     }
-
-    accessRef.current = access;
-    setHasMidiAccess(true);
-    setSysexAllowed(hasSysex);
-
-    const ports = refreshPorts(access);
-    access.onstatechange = () => refreshPorts(access);
-
-    return { access, hasSysex, ...ports };
-  }, [refreshPorts, sysexAllowed]);
+  }, [invalidateMidiAccess, queryMidiPermissionStatus, refreshPorts]);
 
   const scanPorts = useCallback(async (): Promise<{ ok: boolean; message: string }> => {
     if (!('requestMIDIAccess' in navigator)) {
@@ -248,32 +359,122 @@ export function useWebMidi(options: UseWebMidiOptions = {}) {
         message: `Found ${nextInputs.length} MIDI In and ${nextOutputs.length} MIDI Out ports.`,
       };
     } catch (err) {
-      const msg =
-        err instanceof Error
-          ? `MIDI access failed: ${err.message}`
-          : 'MIDI permission denied. Open in a standalone tab and allow MIDI access.';
-      setPermissionError(msg);
-      return { ok: false, message: msg };
+      const formatted = formatMidiAccessError(err);
+      if (formatted.isAddonError) {
+        addonRetryOnFocusRef.current = true;
+      }
+      setPermissionError(formatted.message);
+      return { ok: false, message: formatted.message };
     }
-  }, [requestAccessAndRefresh]);
+  }, [formatMidiAccessError, requestAccessAndRefresh]);
 
   useEffect(() => {
     const isSupported = typeof navigator !== 'undefined' && 'requestMIDIAccess' in navigator;
     setSupported(isSupported);
-    if (isSupported && navigator.permissions?.query) {
-      navigator.permissions
-        .query({ name: 'midi' as PermissionName, sysex: true } as PermissionDescriptor)
-        .then((status) => {
-          if (status.state === 'granted') {
-            void scanPorts();
-          }
-        })
-        .catch(() => {
-          // Permissions API for 'midi' not supported in this browser; scan on demand
-        });
+    if (!isSupported) {
+      return () => cancelAllWaiters();
     }
-    return () => cancelAllWaiters();
-  }, [cancelAllWaiters, scanPorts]);
+
+    let cancelled = false;
+    let watchedStatus: PermissionStatus | null = null;
+
+    const handlePermissionChange = () => {
+      if (cancelled || !watchedStatus) return;
+
+      if (watchedStatus.state === 'granted') {
+        addonRetryOnFocusRef.current = false;
+        void scanPorts();
+        return;
+      }
+
+      if (watchedStatus.state === 'prompt') {
+        const wasGranted = hadGrantedAccessRef.current || Boolean(accessRef.current);
+        hadGrantedAccessRef.current = false;
+        invalidateMidiAccess(
+          wasGranted
+            ? 'WebMIDI permissions were revoked. Re-requesting browser MIDI permission...'
+            : undefined
+        );
+        // Re-request WebMIDI add-on / site permissions automatically when revoked back to prompt
+        void scanPorts();
+        return;
+      }
+
+      if (watchedStatus.state === 'denied') {
+        hadGrantedAccessRef.current = false;
+        addonRetryOnFocusRef.current = false;
+        invalidateMidiAccess(
+          'WebMIDI permission was denied or revoked. Enable MIDI / WebMIDI site permission add-on in your browser and click Retry Permission.'
+        );
+      }
+    };
+
+    const handleFocusOrVisible = () => {
+      if (cancelled || document.visibilityState === 'hidden') return;
+      void (async () => {
+        const status = await queryMidiPermissionStatus();
+        if (cancelled) return;
+
+        if (status) {
+          if (status.state === 'granted' && (!accessRef.current || !sysexAllowedRef.current)) {
+            void scanPorts();
+            return;
+          }
+          if (status.state === 'prompt' && addonRetryOnFocusRef.current) {
+            addonRetryOnFocusRef.current = false;
+            void scanPorts();
+            return;
+          }
+          if (status.state !== 'granted' && (accessRef.current || hadGrantedAccessRef.current)) {
+            hadGrantedAccessRef.current = false;
+            invalidateMidiAccess(
+              'WebMIDI permissions were revoked. Click Retry Permission or Connect MIDI to reactivate.'
+            );
+            if (status.state === 'prompt') {
+              void scanPorts();
+            }
+          }
+        } else if (addonRetryOnFocusRef.current && !accessRef.current) {
+          addonRetryOnFocusRef.current = false;
+          void scanPorts();
+        }
+      })();
+    };
+
+    void (async () => {
+      const status = await queryMidiPermissionStatus();
+      if (cancelled) return;
+
+      if (status) {
+        watchedStatus = status;
+        status.onchange = handlePermissionChange;
+
+        if (status.state === 'denied') {
+          setPermissionError(
+            'WebMIDI permission is currently blocked. Enable MIDI / WebMIDI site permission add-on in your browser and click Retry Permission.'
+          );
+          return;
+        }
+      }
+
+      // On first load (granted, prompt, or Permissions API unavailable),
+      // request WebMIDI + SysEx permissions immediately so Firefox triggers the site permission add-on prompt.
+      await scanPorts();
+    })();
+
+    window.addEventListener('focus', handleFocusOrVisible);
+    document.addEventListener('visibilitychange', handleFocusOrVisible);
+
+    return () => {
+      cancelled = true;
+      if (watchedStatus) {
+        watchedStatus.onchange = null;
+      }
+      window.removeEventListener('focus', handleFocusOrVisible);
+      document.removeEventListener('visibilitychange', handleFocusOrVisible);
+      cancelAllWaiters();
+    };
+  }, [cancelAllWaiters, invalidateMidiAccess, queryMidiPermissionStatus, scanPorts]);
 
   const connectionPhase: MidiConnectionPhase = (() => {
     if (!connected) return permissionError ? 'error' : 'disconnected';
@@ -356,23 +557,23 @@ export function useWebMidi(options: UseWebMidiOptions = {}) {
 
       return { ok: hasSysex && nextInputs.length > 0 && nextOutputs.length > 0, message: resultMsg };
     } catch (err) {
-      const msg =
-        err instanceof Error
-          ? `MIDI access failed: ${err.message}`
-          : 'MIDI permission denied. Open in a standalone tab and allow MIDI access.';
-      setPermissionError(msg);
+      const formatted = formatMidiAccessError(err);
+      if (formatted.isAddonError) {
+        addonRetryOnFocusRef.current = true;
+      }
+      setPermissionError(formatted.message);
       setConnected(false);
       setSysexAllowed(false);
-      setSysexStatus({ code: 'error', message: msg });
+      setSysexStatus({ code: 'error', message: formatted.message });
       appendLog({
         direction: 'in',
         type: 'error',
-        summary: msg,
+        summary: formatted.message,
         rawHex: '--',
       });
-      return { ok: false, message: msg };
+      return { ok: false, message: formatted.message };
     }
-  }, [appendLog, requestAccessAndRefresh]);
+  }, [appendLog, formatMidiAccessError, requestAccessAndRefresh]);
 
   const disconnect = useCallback(() => {
     cancelAllWaiters();
@@ -768,10 +969,10 @@ export function useWebMidi(options: UseWebMidiOptions = {}) {
   );
 
   const clearLogs = useCallback(() => setMidiLogs([]), []);
-  const clearSysexStatus = useCallback(
-    () => setSysexStatus({ code: 'idle', message: 'Idle' }),
-    []
-  );
+  const clearSysexStatus = useCallback(() => {
+    setPermissionError(null);
+    setSysexStatus({ code: 'idle', message: 'Idle' });
+  }, []);
 
   return {
     supported,
