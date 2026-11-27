@@ -3,6 +3,7 @@ import { MidiEventLog, SysexStatusState } from '../types/megadrum';
 import {
   formatBytesHex,
   FW_ERROR,
+  MD_CC_TRIGGERED_IN,
   MD_SYSEX,
   MD_SYSEX_NAMES,
   splitSysexStream,
@@ -70,6 +71,7 @@ interface UseWebMidiOptions {
   onIncomingSysex?: (packet: Uint8Array) => void;
   onIncomingNote?: (channel: number, note: number, velocity: number) => void;
   onIncomingCC?: (channel: number, cc: number, value: number) => void;
+  onTriggeredInput?: (padId: number, source: 'cc' | 'sysex') => void;
 }
 
 const MIDI_IN_STORAGE_KEY = 'megadrum_studio_midi_in_v1';
@@ -808,6 +810,8 @@ export function useWebMidi(options: UseWebMidiOptions = {}) {
               rawHex: formatBytesHex(data),
             });
           } else if (status === 0xb0) {
+            const isTriggeredInCc = d1 === MD_CC_TRIGGERED_IN && d2 <= 55;
+            const triggeredPadId = d2 === 0 ? 1 : d2;
             appendLog({
               direction: 'in',
               type: 'cc',
@@ -815,9 +819,14 @@ export function useWebMidi(options: UseWebMidiOptions = {}) {
               cc: d1,
               ccValue: d2,
               byteLength: data.length,
-              summary: `CC #${d1} = ${d2}`,
+              summary: isTriggeredInCc
+                ? `Triggered Input #${triggeredPadId} (CC #${d1} = ${d2})`
+                : `CC #${d1} = ${d2}`,
               rawHex: formatBytesHex(data),
             });
+            if (isTriggeredInCc) {
+              callbacksRef.current.onTriggeredInput?.(triggeredPadId, 'cc');
+            }
             callbacksRef.current.onIncomingCC?.(channel, d1, d2);
           } else if (status === 0xa0) {
             appendLog({

@@ -15,6 +15,8 @@ export const MD_SYSEX = 0x70;
 
 export const MCU_TYPE_STM32F205TEST1 = 9;
 
+export const MD_CC_TRIGGERED_IN = 119; // 0x77 MegaDrum TriggeredIn CC
+
 export const MD_SYSEX_CMD = {
   MISC: 0x01,
   PEDAL: 0x02,
@@ -25,6 +27,7 @@ export const MD_SYSEX_CMD = {
   POS: 0x07,
   CUSTOM_NAME: 0x08,
   GLOBAL_MISC: 0x09,
+  TRIGGERED_IN_ALT: 0x0a,
   BOOTLOADER: 0x0b,
   MCU_TYPE: 0x0c,
   CONFIG_NAME: 0x0d,
@@ -33,6 +36,7 @@ export const MD_SYSEX_CMD = {
   CONFIG_CURRENT: 0x10,
   CONFIG_LOAD: 0x11,
   PEDAL_LEVEL_RAW: 0x12,
+  TRIGGERED_IN: 0x13,
 } as const;
 
 export const MD_SYSEX_SIZE = {
@@ -53,6 +57,7 @@ export const MD_SYSEX_SIZE = {
   CONFIG_CURRENT: 6,
   CONFIG_LOAD: 6,
   PEDAL_LEVEL_RAW: 9,
+  TRIGGERED_IN: 6,
 } as const;
 
 export const FW_ERROR = {
@@ -72,6 +77,7 @@ export const MD_SYSEX_NAMES: Record<number, string> = {
   0x07: 'Positional',
   0x08: 'Custom Name',
   0x09: 'Global Misc',
+  0x0a: 'Triggered Input',
   0x0b: 'Bootloader',
   0x0c: 'MCU Type',
   0x0d: 'Config Name',
@@ -80,6 +86,7 @@ export const MD_SYSEX_NAMES: Record<number, string> = {
   0x10: 'Config Current',
   0x11: 'Config Load',
   0x12: 'Pedal Level Raw',
+  0x13: 'Triggered Input',
 };
 
 // Official Utils.java nibble conversions
@@ -568,6 +575,7 @@ export interface DecodedSysexResult {
   updated: MegaDrumConfig;
   description: string;
   pedalRawLevel?: number;
+  triggeredInputId?: number;
 }
 
 export function applyIncomingSysexPacket(
@@ -585,6 +593,25 @@ export function applyIncomingSysexPacket(
 
   const cmd = packet[3];
   const pointer = packet[4];
+
+  if (
+    (cmd === MD_SYSEX_CMD.TRIGGERED_IN || cmd === MD_SYSEX_CMD.TRIGGERED_IN_ALT) &&
+    packet.length === MD_SYSEX_SIZE.TRIGGERED_IN
+  ) {
+    const rawIn = pointer & 0x7f;
+    if (rawIn <= 55) {
+      const padId = rawIn === 0 ? 1 : rawIn;
+      return {
+        cmd,
+        id: padId,
+        updated: current,
+        description: `Triggered Physical Input #${padId}`,
+        triggeredInputId: padId,
+      };
+    }
+    return null;
+  }
+
   const next = cloneConfig(current);
 
   if (cmd === MD_SYSEX_CMD.GLOBAL_MISC && packet.length >= MD_SYSEX_SIZE.GLOBAL_MISC) {
@@ -672,6 +699,8 @@ export function applyIncomingSysexPacket(
 
       p.pressrollNote = sysex2byte(packet[i++], packet[i++]);
       p.altNote = sysex2byte(packet[i++], packet[i++]);
+      if (p.altNote !== p.note) p.altNoteLinked = false;
+      if (p.pressrollNote !== p.note) p.pressrollNoteLinked = false;
 
       return {
         cmd,
@@ -693,6 +722,8 @@ export function applyIncomingSysexPacket(
       z.pressrollNote = sysex2byte(packet[i++], packet[i++]);
       z.altNote = sysex2byte(packet[i++], packet[i++]);
       z.dampenedNote = sysex2byte(packet[i++], packet[i++]);
+      if (z.altNote !== z.note) z.altNoteLinked = false;
+      if (z.pressrollNote !== z.note) z.pressrollNoteLinked = false;
       return {
         cmd,
         id: pointer,

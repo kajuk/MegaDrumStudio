@@ -1,5 +1,5 @@
-import React, { useMemo, useState } from 'react';
-import { Copy, Eye, EyeOff, RotateCcw, Search, Tag, Zap } from 'lucide-react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { Copy, Crosshair, Eye, EyeOff, RotateCcw, Search, Tag, Zap } from 'lucide-react';
 import {
   ActiveHit,
   CurveConfig,
@@ -37,6 +37,12 @@ import {
 } from './SyncIndicator';
 import { TriggerDynamicsVisualizer } from './TriggerDynamicsVisualizer';
 
+export interface LastTriggeredInputInfo {
+  padId: number;
+  source: 'cc' | 'sysex' | 'note';
+  timestamp: number;
+}
+
 interface KitPadsViewProps {
   pads: PadConfig[];
   thirdZones: ThirdZoneConfig[];
@@ -50,6 +56,10 @@ interface KitPadsViewProps {
   selectedPairIndex: number; // 0 = Kick (In 1), 1..27 = Stereo Pair (In 2+3 .. In 54+55)
   activeHit: ActiveHit | null;
   audioEnabled: boolean;
+  autoSelectOnHit: boolean;
+  sendTriggeredIn: boolean;
+  midiConnected: boolean;
+  lastTriggeredInput: LastTriggeredInputInfo | null;
   onSelectPair: (pairIdx: number) => void;
   onUpdatePad: (padId: number, patch: Partial<PadConfig>) => void;
   onUpdate3rdZone: (pairIndex: number, patch: Partial<ThirdZoneConfig>) => void;
@@ -61,6 +71,9 @@ interface KitPadsViewProps {
   onSendPairSysex: (pairIndex: number) => void;
   onRequestPairSysex: (pairIndex: number) => void;
   onOpenCustomNamesManager?: () => void;
+  onOpenCrossPadCopy?: (opts?: { mode?: 'pair' | 'input'; pairIndex?: number; padId?: number }) => void;
+  onToggleAutoSelectOnHit?: () => void;
+  onEnableSendTriggeredIn?: () => void;
 }
 
 const ZONE_TEMPLATES: {
@@ -108,6 +121,10 @@ export const KitPadsView: React.FC<KitPadsViewProps> = ({
   selectedPairIndex,
   activeHit,
   audioEnabled,
+  autoSelectOnHit,
+  sendTriggeredIn,
+  midiConnected,
+  lastTriggeredInput,
   onSelectPair,
   onUpdatePad,
   onUpdate3rdZone,
@@ -119,10 +136,21 @@ export const KitPadsView: React.FC<KitPadsViewProps> = ({
   onSendPairSysex,
   onRequestPairSysex,
   onOpenCustomNamesManager,
+  onOpenCrossPadCopy,
+  onToggleAutoSelectOnHit,
+  onEnableSendTriggeredIn,
 }) => {
   const [search, setSearch] = useState('');
   const [categoryFilter, setCategoryFilter] = useState<InputCategory>('all');
   const [showKitMap, setShowKitMap] = useState(true);
+  const sidebarItemRefs = useRef<Record<number, HTMLButtonElement | null>>({});
+
+  useEffect(() => {
+    const el = sidebarItemRefs.current[selectedPairIndex];
+    if (el) {
+      el.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    }
+  }, [selectedPairIndex]);
 
   const pairCount = Math.floor(maxInputs / 2);
 
@@ -308,6 +336,9 @@ export const KitPadsView: React.FC<KitPadsViewProps> = ({
               return (
                 <button
                   key={item.pairIdx}
+                  ref={(el) => {
+                    sidebarItemRefs.current[item.pairIdx] = el;
+                  }}
                   type="button"
                   onClick={() => onSelectPair(item.pairIdx)}
                   className={`w-full px-3 py-2 text-left flex items-center justify-between gap-2 transition-colors ${
@@ -387,6 +418,45 @@ export const KitPadsView: React.FC<KitPadsViewProps> = ({
 
                 return (
                   <div className="flex flex-wrap items-center gap-1.5 shrink-0">
+                    {onToggleAutoSelectOnHit && (
+                      <button
+                        type="button"
+                        onClick={onToggleAutoSelectOnHit}
+                        aria-pressed={autoSelectOnHit}
+                        title={
+                          autoSelectOnHit
+                            ? 'Auto-Select on Hit is ON — striking a pad jumps the editor to that input'
+                            : 'Enable Auto-Select on Hit to jump to struck pads automatically'
+                        }
+                        className={`inline-flex items-center justify-center gap-1.5 px-2.5 py-1.5 text-xs font-medium rounded border transition-colors whitespace-nowrap ${
+                          autoSelectOnHit
+                            ? 'border-emerald-600 bg-emerald-600 text-white hover:bg-emerald-700'
+                            : 'border-[var(--md-border-strong)] bg-[var(--md-control)] text-slate-700 dark:text-slate-200 hover:bg-[var(--md-hover)]'
+                        }`}
+                      >
+                        <Crosshair className="w-3.5 h-3.5 shrink-0" />
+                        Auto-Select
+                      </button>
+                    )}
+
+                    {onOpenCrossPadCopy && (
+                      <button
+                        type="button"
+                        onClick={() =>
+                          onOpenCrossPadCopy({
+                            mode: isKick ? 'input' : 'pair',
+                            pairIndex: selectedPairIndex,
+                            padId: leftPad.id,
+                          })
+                        }
+                        title="Copy this pad/pair settings or individual blocks to other inputs"
+                        className="inline-flex items-center justify-center gap-1.5 px-2.5 py-1.5 text-xs font-medium rounded border border-[var(--md-border-strong)] bg-[var(--md-control)] text-slate-700 dark:text-slate-200 hover:bg-[var(--md-hover)] transition-colors whitespace-nowrap"
+                      >
+                        <Copy className="w-3.5 h-3.5 shrink-0 text-blue-600 dark:text-blue-400" />
+                        Copy To...
+                      </button>
+                    )}
+
                     <button
                       type="button"
                       onClick={() => setShowKitMap((v) => !v)}
@@ -498,6 +568,43 @@ export const KitPadsView: React.FC<KitPadsViewProps> = ({
                 }
               />
             </div>
+
+            {autoSelectOnHit && (
+              <div className="flex flex-wrap items-center justify-between gap-2 px-3 py-1.5 rounded-md border border-emerald-500/30 bg-emerald-50/60 dark:bg-emerald-950/25 text-xs">
+                <div className="flex flex-wrap items-center gap-2 text-emerald-900 dark:text-emerald-200 min-w-0">
+                  <Crosshair className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400 shrink-0" />
+                  <span className="font-medium">Auto-Select on Hit</span>
+                  {lastTriggeredInput ? (
+                    <span className="font-mono text-[11px] text-emerald-700 dark:text-emerald-300">
+                      · Last hit: In {String(lastTriggeredInput.padId).padStart(2, '0')} (
+                      {pads[lastTriggeredInput.padId - 1]?.name || `Input ${lastTriggeredInput.padId}`}) via{' '}
+                      {lastTriggeredInput.source === 'cc'
+                        ? 'TriggeredIn CC #119'
+                        : lastTriggeredInput.source === 'sysex'
+                        ? 'TriggeredIn SysEx'
+                        : 'MIDI Note'}
+                    </span>
+                  ) : (
+                    <span className="text-[11px] text-emerald-700/80 dark:text-emerald-300/80">
+                      · Strike any pad on your kit to jump directly to its configuration
+                    </span>
+                  )}
+                </div>
+
+                {!sendTriggeredIn && onEnableSendTriggeredIn && (
+                  <button
+                    type="button"
+                    onClick={onEnableSendTriggeredIn}
+                    className="px-2 py-0.5 text-[11px] font-semibold rounded bg-emerald-600 hover:bg-emerald-700 text-white whitespace-nowrap shrink-0"
+                    title="Enable Misc Send TriggeredIn (SysEx 0x01) so MegaDrum reports exact physical input numbers even for shared or unassigned notes"
+                  >
+                    {midiConnected
+                      ? 'Enable & Send TriggeredIn (0x01)'
+                      : 'Enable Send TriggeredIn (0x01)'}
+                  </button>
+                )}
+              </div>
+            )}
           </div>
 
           {showKitMap && (
@@ -584,6 +691,11 @@ export const KitPadsView: React.FC<KitPadsViewProps> = ({
             customNames={customNames}
             customPadNamesEnabled={customPadNamesEnabled}
             audioEnabled={audioEnabled}
+            isRecentlyTriggered={Boolean(
+              lastTriggeredInput &&
+                lastTriggeredInput.padId === leftPad.id &&
+                Date.now() - lastTriggeredInput.timestamp < 1400
+            )}
             lastVelocity={
               activeHit && activeHit.padId === leftPad.id ? activeHit.velocity : undefined
             }
@@ -592,6 +704,16 @@ export const KitPadsView: React.FC<KitPadsViewProps> = ({
               leftPos ? (patch) => onUpdatePositional(leftPad.id, patch) : undefined
             }
             onOpenCustomNamesManager={onOpenCustomNamesManager}
+            onCopyInputTo={
+              onOpenCrossPadCopy
+                ? () =>
+                    onOpenCrossPadCopy({
+                      mode: 'input',
+                      pairIndex: selectedPairIndex,
+                      padId: leftPad.id,
+                    })
+                : undefined
+            }
           />
 
           {!isKick && rightPad && (
@@ -612,6 +734,11 @@ export const KitPadsView: React.FC<KitPadsViewProps> = ({
               customNames={customNames}
               customPadNamesEnabled={customPadNamesEnabled}
               audioEnabled={audioEnabled}
+              isRecentlyTriggered={Boolean(
+                lastTriggeredInput &&
+                  lastTriggeredInput.padId === rightPad.id &&
+                  Date.now() - lastTriggeredInput.timestamp < 1400
+              )}
               lastVelocity={
                 activeHit && activeHit.padId === rightPad.id ? activeHit.velocity : undefined
               }
@@ -620,6 +747,16 @@ export const KitPadsView: React.FC<KitPadsViewProps> = ({
                 rightPos ? (patch) => onUpdatePositional(rightPad.id, patch) : undefined
               }
               onOpenCustomNamesManager={onOpenCustomNamesManager}
+              onCopyInputTo={
+                onOpenCrossPadCopy
+                  ? () =>
+                      onOpenCrossPadCopy({
+                        mode: 'input',
+                        pairIndex: selectedPairIndex,
+                        padId: rightPad.id,
+                      })
+                  : undefined
+              }
             />
           )}
         </div>
@@ -696,9 +833,18 @@ export const KitPadsView: React.FC<KitPadsViewProps> = ({
                 label="3rd Alt Note"
                 value={thirdZone.altNote}
                 sync={getFieldSync(thirdZone, snapThirdZone, 'altNote')}
+                linked={thirdZone.altNoteLinked}
+                linkTitle="Lock 3rd Alt Note to 3rd Zone / Bell Note"
+                onToggleLinked={(linked) =>
+                  onUpdate3rdZone(selectedPairIndex, { altNoteLinked: linked })
+                }
                 onRevert={
                   snapThirdZone
-                    ? () => onUpdate3rdZone(selectedPairIndex, { altNote: snapThirdZone.altNote })
+                    ? () =>
+                        onUpdate3rdZone(selectedPairIndex, {
+                          altNote: snapThirdZone.altNote,
+                          altNoteLinked: false,
+                        })
                     : undefined
                 }
                 onChange={(altNote) => onUpdate3rdZone(selectedPairIndex, { altNote })}
@@ -708,11 +854,17 @@ export const KitPadsView: React.FC<KitPadsViewProps> = ({
                 label="3rd Pressroll Note"
                 value={thirdZone.pressrollNote}
                 sync={getFieldSync(thirdZone, snapThirdZone, 'pressrollNote')}
+                linked={thirdZone.pressrollNoteLinked}
+                linkTitle="Lock 3rd Pressroll Note to 3rd Zone / Bell Note"
+                onToggleLinked={(linked) =>
+                  onUpdate3rdZone(selectedPairIndex, { pressrollNoteLinked: linked })
+                }
                 onRevert={
                   snapThirdZone
                     ? () =>
                         onUpdate3rdZone(selectedPairIndex, {
                           pressrollNote: snapThirdZone.pressrollNote,
+                          pressrollNoteLinked: false,
                         })
                     : undefined
                 }
@@ -756,10 +908,12 @@ interface InputColumnSectionProps {
   customNames: string[];
   customPadNamesEnabled: boolean;
   audioEnabled: boolean;
+  isRecentlyTriggered?: boolean;
   lastVelocity?: number;
   onUpdatePad: (patch: Partial<PadConfig>) => void;
   onUpdatePos?: (patch: Partial<PositionalConfig>) => void;
   onOpenCustomNamesManager?: () => void;
+  onCopyInputTo?: () => void;
 }
 
 const InputColumnSection: React.FC<InputColumnSectionProps> = ({
@@ -775,10 +929,12 @@ const InputColumnSection: React.FC<InputColumnSectionProps> = ({
   customNames,
   customPadNamesEnabled,
   audioEnabled,
+  isRecentlyTriggered = false,
   lastVelocity,
   onUpdatePad,
   onUpdatePos,
   onOpenCustomNamesManager,
+  onCopyInputTo,
 }) => {
   const padSummary = getPadSyncSummary(pad, snapPad, pos, snapPos);
   const maxCustomNames = getMaxCustomPadNames(mcuTypeId);
@@ -830,12 +986,23 @@ const InputColumnSection: React.FC<InputColumnSectionProps> = ({
   })();
 
   return (
-    <section className="border border-[var(--md-border)] rounded-lg bg-[var(--md-panel)] p-5 space-y-4">
+    <section
+      className={`border rounded-lg bg-[var(--md-panel)] p-5 space-y-4 transition-colors ${
+        isRecentlyTriggered
+          ? 'border-emerald-500 ring-1 ring-emerald-500/35'
+          : 'border-[var(--md-border)]'
+      }`}
+    >
       <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 dark:border-slate-800 pb-3">
         <div className="flex flex-wrap items-center gap-2.5">
           <h2 className="text-sm font-display font-semibold text-slate-900 dark:text-white">
             {title}
           </h2>
+          {isRecentlyTriggered && (
+            <span className="text-[10px] font-mono uppercase tracking-wide text-emerald-600 dark:text-emerald-400">
+              Triggered
+            </span>
+          )}
           {padSummary.state === 'modified' && (
             <span className="text-[11px] font-mono text-amber-700 dark:text-amber-400">
               {padSummary.diffCount} modified
@@ -845,7 +1012,18 @@ const InputColumnSection: React.FC<InputColumnSectionProps> = ({
             <span className="text-[11px] text-sky-700 dark:text-sky-400">Unsynced</span>
           )}
         </div>
-        <div className="flex items-center gap-4">
+        <div className="flex items-center gap-3">
+          {onCopyInputTo && (
+            <button
+              type="button"
+              onClick={onCopyInputTo}
+              title={`Copy Input ${pad.id} parameters to other inputs`}
+              className="inline-flex items-center gap-1 text-[11px] font-medium text-blue-600 dark:text-blue-400 hover:underline whitespace-nowrap"
+            >
+              <Copy className="w-3 h-3" />
+              Copy...
+            </button>
+          )}
           <label className="inline-flex items-center gap-1.5 text-xs cursor-pointer">
             <input
               type="checkbox"
@@ -1049,7 +1227,14 @@ const InputColumnSection: React.FC<InputColumnSectionProps> = ({
           label="Alt Note"
           value={pad.altNote}
           sync={fAltNote}
-          onRevert={snapPad ? () => onUpdatePad({ altNote: snapPad.altNote }) : undefined}
+          linked={pad.altNoteLinked}
+          linkTitle={isLeftInput ? 'Lock Alt Note to Main Note' : 'Lock Alt Note to Rim / Edge Note'}
+          onToggleLinked={(linked) => onUpdatePad({ altNoteLinked: linked })}
+          onRevert={
+            snapPad
+              ? () => onUpdatePad({ altNote: snapPad.altNote, altNoteLinked: false })
+              : undefined
+          }
           onChange={(altNote) => onUpdatePad({ altNote })}
           audioEnabled={audioEnabled}
         />
@@ -1057,8 +1242,15 @@ const InputColumnSection: React.FC<InputColumnSectionProps> = ({
           label="Pressroll Note"
           value={pad.pressrollNote}
           sync={fPressNote}
+          linked={pad.pressrollNoteLinked}
+          linkTitle={
+            isLeftInput ? 'Lock Pressroll Note to Main Note' : 'Lock Pressroll Note to Rim / Edge Note'
+          }
+          onToggleLinked={(linked) => onUpdatePad({ pressrollNoteLinked: linked })}
           onRevert={
-            snapPad ? () => onUpdatePad({ pressrollNote: snapPad.pressrollNote }) : undefined
+            snapPad
+              ? () => onUpdatePad({ pressrollNote: snapPad.pressrollNote, pressrollNoteLinked: false })
+              : undefined
           }
           onChange={(pressrollNote) => onUpdatePad({ pressrollNote })}
           audioEnabled={audioEnabled}

@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { TopBar, WorkspaceTab } from './components/TopBar';
 import { WorkspaceToolbar } from './components/WorkspaceToolbar';
-import { KitPadsView } from './components/KitPadsView';
+import { KitPadsView, LastTriggeredInputInfo } from './components/KitPadsView';
 import { PedalView } from './components/PedalView';
 import { CurvesView } from './components/CurvesView';
 import { GlobalMiscView } from './components/GlobalMiscView';
@@ -13,6 +13,11 @@ import {
 } from './components/ConnectionStatusPopup';
 import { MidiAlertModal } from './components/MidiAlertModal';
 import { CustomPadNamesModal } from './components/CustomPadNamesModal';
+import {
+  CrossPadCopyModal,
+  CrossPadCopyMode,
+  CrossPadCopyRequest,
+} from './components/CrossPadCopyModal';
 import { cloneConfig, FACTORY_PRESETS } from './data/presets';
 import { SysexBatchResult, SysexTaskItem, useWebMidi } from './hooks/useWebMidi';
 import {
@@ -80,6 +85,7 @@ import {
 
 const STORAGE_KEY = 'megadrum_studio_config_v2';
 const LIVE_UPDATES_STORAGE_KEY = 'megadrum_studio_live_updates_v1';
+const AUTO_SELECT_STORAGE_KEY = 'megadrum_studio_auto_select_hit_v1';
 
 function downloadBlob(data: BlobPart, filename: string, mime: string) {
   const blob = new Blob([data], { type: mime });
@@ -158,6 +164,27 @@ export default function App() {
   const [connectionPopup, setConnectionPopup] = useState<ConnectionPopupData | null>(null);
   const [alertModalOpen, setAlertModalOpen] = useState<boolean>(false);
   const [customNamesModalOpen, setCustomNamesModalOpen] = useState<boolean>(false);
+  const [crossPadCopyModal, setCrossPadCopyModal] = useState<{
+    open: boolean;
+    mode: CrossPadCopyMode;
+    pairIndex: number;
+    padId?: number;
+  }>({
+    open: false,
+    mode: 'pair',
+    pairIndex: 2,
+  });
+  const [autoSelectOnHit, setAutoSelectOnHit] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem(AUTO_SELECT_STORAGE_KEY) === 'true';
+    } catch {
+      return false;
+    }
+  });
+  const autoSelectOnHitRef = useRef<boolean>(autoSelectOnHit);
+  autoSelectOnHitRef.current = autoSelectOnHit;
+  const [lastTriggeredInput, setLastTriggeredInput] = useState<LastTriggeredInputInfo | null>(null);
+  const lastHardwareTriggeredAtRef = useRef<number>(0);
   const lastAlertKeyRef = useRef<string>('');
   const [connectTriggerId, setConnectTriggerId] = useState<number>(0);
   const [detectedHardware, setDetectedHardware] = useState<{
@@ -219,11 +246,47 @@ export default function App() {
     }
   }, [liveUpdates]);
 
+  useEffect(() => {
+    try {
+      localStorage.setItem(AUTO_SELECT_STORAGE_KEY, autoSelectOnHit ? 'true' : 'false');
+    } catch {
+      // Ignore quota errors
+    }
+  }, [autoSelectOnHit]);
+
+  const selectInputByPadId = useCallback((padId: number, source: 'cc' | 'sysex' | 'note') => {
+    const maxPadId = Math.min(55, Math.max(1, configRef.current.global.maxInputs - 1));
+    const clampedPadId = Math.max(1, Math.min(maxPadId, padId));
+    const pairIdx = clampedPadId <= 1 ? 0 : Math.floor(clampedPadId / 2);
+    const zone: 'head' | 'rim' = clampedPadId > 1 && (clampedPadId & 1) === 1 ? 'rim' : 'head';
+    const now = Date.now();
+
+    if (source === 'cc' || source === 'sysex') {
+      lastHardwareTriggeredAtRef.current = now;
+      setActiveHit((prev) => ({
+        padId: clampedPadId,
+        zone,
+        velocity: prev && prev.padId === clampedPadId && now - prev.timestamp < 80 ? prev.velocity : 100,
+        timestamp: now,
+      }));
+    }
+
+    setLastTriggeredInput({ padId: clampedPadId, source, timestamp: now });
+
+    if (autoSelectOnHitRef.current) {
+      setSelectedPairIndex(pairIdx);
+    }
+  }, []);
+
   const handleIncomingSysex = useCallback(
     (packet: Uint8Array) => {
       const current = configRef.current;
       const res = applyIncomingSysexPacket(packet, current);
       if (res) {
+        if (res.triggeredInputId !== undefined) {
+          selectInputByPadId(res.triggeredInputId, 'sysex');
+          return;
+        }
         if (res.pedalRawLevel !== undefined) {
           setLastRawAdc(res.pedalRawLevel);
         }
@@ -241,7 +304,7 @@ export default function App() {
         }
       }
     },
-    [showNotice]
+    [selectInputByPadId, showNotice]
   );
 
   const handleIncomingNote = useCallback(
@@ -256,6 +319,9 @@ export default function App() {
       if (matchingPad) {
         const zone = matchingPad.id > 1 && (matchingPad.id & 1) === 1 ? 'rim' : 'head';
         setActiveHit({ padId: matchingPad.id, zone, velocity, timestamp: Date.now() });
+        if (autoSelectOnHitRef.current && Date.now() - lastHardwareTriggeredAtRef.current > 120) {
+          selectInputByPadId(matchingPad.id, 'note');
+        }
       } else {
         const matching3rdIdx = config.thirdZones.findIndex(
           (z) => !z.disabled && (z.note === note || z.dampenedNote === note)
@@ -263,13 +329,16 @@ export default function App() {
         if (matching3rdIdx >= 0) {
           const leftPadId = matching3rdIdx * 2 + 2;
           setActiveHit({ padId: leftPadId, zone: 'bell', velocity, timestamp: Date.now() });
+          if (autoSelectOnHitRef.current && Date.now() - lastHardwareTriggeredAtRef.current > 120) {
+            selectInputByPadId(leftPadId, 'note');
+          }
         }
       }
       if (audioEnabled) {
         playDrumSound(note, velocity);
       }
     },
-    [audioEnabled, config.global.maxInputs, config.pads, config.thirdZones]
+    [audioEnabled, config.global.maxInputs, config.pads, config.thirdZones, selectInputByPadId]
   );
 
   const handleIncomingCC = useCallback(
@@ -281,10 +350,18 @@ export default function App() {
     [config.pedal.cc]
   );
 
+  const handleTriggeredInput = useCallback(
+    (padId: number, source: 'cc' | 'sysex') => {
+      selectInputByPadId(padId, source);
+    },
+    [selectInputByPadId]
+  );
+
   const midi = useWebMidi({
     onIncomingSysex: handleIncomingSysex,
     onIncomingNote: handleIncomingNote,
     onIncomingCC: handleIncomingCC,
+    onTriggeredInput: handleTriggeredInput,
   });
 
   connectionPhaseRef.current = midi.connectionPhase;
@@ -696,13 +773,42 @@ export default function App() {
   // Config mutators
   const handleUpdatePad = useCallback(
     (padId: number, patch: Partial<PadConfig>) => {
+      const applyLinkedPatch = (p: PadConfig): PadConfig => {
+        const merged: PadConfig = { ...p, ...patch };
+        if (patch.altNoteLinked === true) {
+          merged.altNote = merged.note;
+        }
+        if (patch.pressrollNoteLinked === true) {
+          merged.pressrollNote = merged.note;
+        }
+        if (patch.note !== undefined) {
+          if (merged.altNoteLinked && patch.altNote === undefined) {
+            merged.altNote = merged.note;
+          }
+          if (merged.pressrollNoteLinked && patch.pressrollNote === undefined) {
+            merged.pressrollNote = merged.note;
+          }
+        }
+        return merged;
+      };
+
+      const prevPad = configRef.current.pads[padId - 1];
+      const nextPad = prevPad ? applyLinkedPatch(prevPad) : null;
+
       setSelectedPresetId('custom');
       setConfig((prev) => ({
         ...prev,
-        pads: prev.pads.map((p) => (p.id === padId ? { ...p, ...patch } : p)),
+        pads: prev.pads.map((p) => (p.id === padId ? applyLinkedPatch(p) : p)),
       }));
-      const changedKeys = Object.keys(patch);
-      if (changedKeys.some((k) => k !== 'name')) {
+
+      const nonWireKeys = new Set(['name', 'altNoteLinked', 'pressrollNoteLinked']);
+      const wireChanged =
+        Object.keys(patch).some((k) => !nonWireKeys.has(k)) ||
+        (prevPad !== undefined &&
+          nextPad !== null &&
+          (nextPad.altNote !== prevPad.altNote ||
+            nextPad.pressrollNote !== prevPad.pressrollNote));
+      if (wireChanged) {
         enqueueLiveBlocks([`pad:${padId - 1}`]);
       }
     },
@@ -712,12 +818,46 @@ export default function App() {
   const handleUpdate3rdZone = useCallback(
     (pairIndex: number, patch: Partial<ThirdZoneConfig>) => {
       const zIdx = pairIndex - 1;
+      const applyLinkedThirdPatch = (z: ThirdZoneConfig): ThirdZoneConfig => {
+        const merged: ThirdZoneConfig = { ...z, ...patch };
+        if (patch.altNoteLinked === true) {
+          merged.altNote = merged.note;
+        }
+        if (patch.pressrollNoteLinked === true) {
+          merged.pressrollNote = merged.note;
+        }
+        if (patch.note !== undefined) {
+          if (merged.altNoteLinked && patch.altNote === undefined) {
+            merged.altNote = merged.note;
+          }
+          if (merged.pressrollNoteLinked && patch.pressrollNote === undefined) {
+            merged.pressrollNote = merged.note;
+          }
+        }
+        return merged;
+      };
+
+      const prevZone = configRef.current.thirdZones[zIdx];
+      const nextZone = prevZone ? applyLinkedThirdPatch(prevZone) : null;
+
       setSelectedPresetId('custom');
       setConfig((prev) => ({
         ...prev,
-        thirdZones: prev.thirdZones.map((z, idx) => (idx === zIdx ? { ...z, ...patch } : z)),
+        thirdZones: prev.thirdZones.map((z, idx) =>
+          idx === zIdx ? applyLinkedThirdPatch(z) : z
+        ),
       }));
-      enqueueLiveBlocks([`third:${zIdx}`]);
+
+      const nonWireKeys = new Set(['altNoteLinked', 'pressrollNoteLinked']);
+      const wireChanged =
+        Object.keys(patch).some((k) => !nonWireKeys.has(k)) ||
+        (prevZone !== undefined &&
+          nextZone !== null &&
+          (nextZone.altNote !== prevZone.altNote ||
+            nextZone.pressrollNote !== prevZone.pressrollNote));
+      if (wireChanged) {
+        enqueueLiveBlocks([`third:${zIdx}`]);
+      }
     },
     [enqueueLiveBlocks]
   );
@@ -733,6 +873,230 @@ export default function App() {
       enqueueLiveBlocks([`pos:${pIdx}`]);
     },
     [enqueueLiveBlocks]
+  );
+
+  const handleCrossPadCopy = useCallback(
+    (req: CrossPadCopyRequest) => {
+      const isLeftInput = (id: number) => id >= 2 && id % 2 === 0;
+      const isRightInput = (id: number) => id >= 3 && id % 2 === 1;
+
+      const copyPadFields = (src: PadConfig, dst: PadConfig): PadConfig => {
+        const next: PadConfig = { ...dst };
+        if (req.includeDynamics) {
+          next.disabled = src.disabled;
+          next.curve = src.curve;
+          next.threshold = src.threshold;
+          next.retrigger = src.retrigger;
+          next.levelMax = src.levelMax;
+          next.minScan = src.minScan;
+          next.autoLevel = src.autoLevel;
+          next.gain = src.gain;
+          next.dynTime = src.dynTime;
+          next.dynLevel = src.dynLevel;
+          next.compression = src.compression;
+          next.shift = src.shift;
+          next.rollSmoothLevel = src.rollSmoothLevel;
+          next.extraFalseSupp = src.extraFalseSupp;
+        }
+        if (req.includeWiringAndXtalk) {
+          next.midiChannel = src.midiChannel;
+          next.padFunction = src.padFunction;
+          next.xtalkLevel = src.xtalkLevel;
+          next.xtalkGroup = src.xtalkGroup;
+          if (isLeftInput(src.id) && isLeftInput(dst.id)) {
+            next.dual = src.dual;
+            next.threeWay = src.threeWay;
+          }
+          if (isRightInput(src.id) && isRightInput(dst.id)) {
+            next.type = src.type;
+          }
+        }
+        if (req.includeNotes) {
+          next.note = src.note;
+          next.altNote = src.altNote;
+          next.pressrollNote = src.pressrollNote;
+          next.altNoteLinked = src.altNoteLinked;
+          next.pressrollNoteLinked = src.pressrollNoteLinked;
+        }
+        if (req.includeHardwareName) {
+          next.customNameIndex = src.customNameIndex;
+        }
+        return next;
+      };
+
+      const copyThirdZoneFields = (
+        src: ThirdZoneConfig,
+        dst: ThirdZoneConfig
+      ): ThirdZoneConfig => {
+        const next: ThirdZoneConfig = { ...dst };
+        if (req.includeDynamics || req.includeWiringAndXtalk) {
+          next.disabled = src.disabled;
+          next.threshold = src.threshold;
+        }
+        if (req.includeNotes) {
+          next.note = src.note;
+          next.altNote = src.altNote;
+          next.pressrollNote = src.pressrollNote;
+          next.dampenedNote = src.dampenedNote;
+          next.altNoteLinked = src.altNoteLinked;
+          next.pressrollNoteLinked = src.pressrollNoteLinked;
+        }
+        return next;
+      };
+
+      const copyPositionalFields = (
+        src: PositionalConfig,
+        dst: PositionalConfig
+      ): PositionalConfig => ({
+        ...dst,
+        level: src.level,
+        low: src.low,
+        high: src.high,
+      });
+
+      const liveBlocks = new Set<string>();
+      const copyAnyPadParam =
+        req.includeDynamics ||
+        req.includeWiringAndXtalk ||
+        req.includeNotes ||
+        req.includeHardwareName;
+
+      if (req.mode === 'input') {
+        if (req.targetPadIds.length === 0) return;
+        const srcIdx = req.sourcePadId - 1;
+        setSelectedPresetId('custom');
+        setConfig((prev) => {
+          const next = cloneConfig(prev);
+          const srcPad = next.pads[srcIdx];
+          const srcPos = next.positionals[srcIdx];
+          if (!srcPad) return prev;
+
+          for (const targetPadId of req.targetPadIds) {
+            const dstIdx = targetPadId - 1;
+            if (dstIdx === srcIdx || !next.pads[dstIdx]) continue;
+            if (copyAnyPadParam) {
+              next.pads[dstIdx] = copyPadFields(srcPad, next.pads[dstIdx]);
+            }
+            if (req.includePositional && srcPos && next.positionals[dstIdx]) {
+              next.positionals[dstIdx] = copyPositionalFields(srcPos, next.positionals[dstIdx]);
+            }
+          }
+          return next;
+        });
+
+        for (const targetPadId of req.targetPadIds) {
+          const dstIdx = targetPadId - 1;
+          if (dstIdx === srcIdx || dstIdx < 0 || dstIdx >= 55) continue;
+          if (copyAnyPadParam) liveBlocks.add(`pad:${dstIdx}`);
+          if (req.includePositional) liveBlocks.add(`pos:${dstIdx}`);
+        }
+        if (liveBlocks.size > 0) {
+          enqueueLiveBlocks(Array.from(liveBlocks));
+        }
+        showNotice(
+          `Copied settings from In ${String(req.sourcePadId).padStart(2, '0')} to ${req.targetPadIds.length} input${req.targetPadIds.length === 1 ? '' : 's'}`
+        );
+        return;
+      }
+
+      if (req.targetPairIndices.length === 0) return;
+      const srcPair = req.sourcePairIndex;
+      const srcHeadIdx = srcPair === 0 ? 0 : srcPair * 2 - 1;
+      const srcRimIdx = srcPair === 0 ? -1 : srcPair * 2;
+      const srcThirdIdx = srcPair === 0 ? -1 : srcPair - 1;
+
+      setSelectedPresetId('custom');
+      setConfig((prev) => {
+        const next = cloneConfig(prev);
+        const srcHead = next.pads[srcHeadIdx];
+        const srcRim = srcRimIdx >= 0 ? next.pads[srcRimIdx] : undefined;
+        const srcThird = srcThirdIdx >= 0 ? next.thirdZones[srcThirdIdx] : undefined;
+        const srcPosHead = next.positionals[srcHeadIdx];
+        const srcPosRim = srcRimIdx >= 0 ? next.positionals[srcRimIdx] : undefined;
+
+        for (const targetPair of req.targetPairIndices) {
+          if (targetPair === srcPair) continue;
+          const dstHeadIdx = targetPair === 0 ? 0 : targetPair * 2 - 1;
+          const dstRimIdx = targetPair === 0 ? -1 : targetPair * 2;
+          const dstThirdIdx = targetPair === 0 ? -1 : targetPair - 1;
+
+          if (req.includeHead && copyAnyPadParam && srcHead && next.pads[dstHeadIdx]) {
+            next.pads[dstHeadIdx] = copyPadFields(srcHead, next.pads[dstHeadIdx]);
+          }
+          if (
+            req.includeRim &&
+            copyAnyPadParam &&
+            srcRim &&
+            dstRimIdx >= 0 &&
+            next.pads[dstRimIdx]
+          ) {
+            next.pads[dstRimIdx] = copyPadFields(srcRim, next.pads[dstRimIdx]);
+          }
+          if (
+            req.includeThirdZone &&
+            (req.includeDynamics || req.includeWiringAndXtalk || req.includeNotes) &&
+            srcThird &&
+            dstThirdIdx >= 0 &&
+            next.thirdZones[dstThirdIdx]
+          ) {
+            next.thirdZones[dstThirdIdx] = copyThirdZoneFields(
+              srcThird,
+              next.thirdZones[dstThirdIdx]
+            );
+          }
+          if (req.includePositional) {
+            if (srcPosHead && next.positionals[dstHeadIdx]) {
+              next.positionals[dstHeadIdx] = copyPositionalFields(
+                srcPosHead,
+                next.positionals[dstHeadIdx]
+              );
+            }
+            if (srcPosRim && dstRimIdx >= 0 && next.positionals[dstRimIdx]) {
+              next.positionals[dstRimIdx] = copyPositionalFields(
+                srcPosRim,
+                next.positionals[dstRimIdx]
+              );
+            }
+          }
+        }
+        return next;
+      });
+
+      for (const targetPair of req.targetPairIndices) {
+        if (targetPair === srcPair) continue;
+        const dstHeadIdx = targetPair === 0 ? 0 : targetPair * 2 - 1;
+        const dstRimIdx = targetPair === 0 ? -1 : targetPair * 2;
+        const dstThirdIdx = targetPair === 0 ? -1 : targetPair - 1;
+
+        if (req.includeHead && copyAnyPadParam) liveBlocks.add(`pad:${dstHeadIdx}`);
+        if (req.includeRim && copyAnyPadParam && srcRimIdx >= 0 && dstRimIdx >= 0) {
+          liveBlocks.add(`pad:${dstRimIdx}`);
+        }
+        if (
+          req.includeThirdZone &&
+          (req.includeDynamics || req.includeWiringAndXtalk || req.includeNotes) &&
+          srcThirdIdx >= 0 &&
+          dstThirdIdx >= 0
+        ) {
+          liveBlocks.add(`third:${dstThirdIdx}`);
+        }
+        if (req.includePositional) {
+          liveBlocks.add(`pos:${dstHeadIdx}`);
+          if (srcRimIdx >= 0 && dstRimIdx >= 0) {
+            liveBlocks.add(`pos:${dstRimIdx}`);
+          }
+        }
+      }
+
+      if (liveBlocks.size > 0) {
+        enqueueLiveBlocks(Array.from(liveBlocks));
+      }
+      const srcLabel = srcPair === 0 ? 'Kick (In 01)' : `Pair ${srcPair}`;
+      showNotice(
+        `Copied settings from ${srcLabel} to ${req.targetPairIndices.length} pair${req.targetPairIndices.length === 1 ? '' : 's'}`
+      );
+    },
+    [enqueueLiveBlocks, showNotice]
   );
 
   const handleApplyZoneTemplate = useCallback(
@@ -1511,6 +1875,45 @@ export default function App() {
     );
   }, [executeQueue]);
 
+  const handleToggleAutoSelectOnHit = useCallback(() => {
+    setAutoSelectOnHit((prev) => {
+      const next = !prev;
+      showNotice(next ? 'Auto-Select on Hit enabled' : 'Auto-Select on Hit disabled');
+      return next;
+    });
+  }, [showNotice]);
+
+  const handleEnableSendTriggeredIn = useCallback(async () => {
+    setAutoSelectOnHit(true);
+    const nextCfg: MegaDrumConfig = {
+      ...configRef.current,
+      misc: {
+        ...configRef.current.misc,
+        sendTriggeredIn: true,
+      },
+    };
+    setSelectedPresetId('custom');
+    setConfig(nextCfg);
+    configRef.current = nextCfg;
+
+    if (connectionPhaseRef.current === 'connected') {
+      await executeQueue(
+        [
+          {
+            kind: 'send',
+            packet: encodeMiscSysex(nextCfg),
+            verifyRequest: buildRequestMiscSysex(nextCfg.chainId),
+            expectedCmd: MD_SYSEX_CMD.MISC,
+            label: 'Enable Send TriggeredIn (0x01)',
+          },
+        ],
+        () => 'Enabled Send TriggeredIn on MegaDrum (Auto-Select on Hit active)'
+      );
+    } else {
+      showNotice('Enabled Send TriggeredIn in Misc config — send Misc (0x01) once connected');
+    }
+  }, [executeQueue, showNotice]);
+
   const handleQueryHardware = useCallback(async () => {
     const ch = configRef.current.chainId;
     await executeQueue(
@@ -1882,6 +2285,10 @@ export default function App() {
           selectedPairIndex={selectedPairIndex}
           activeHit={activeHit}
           audioEnabled={audioEnabled}
+          autoSelectOnHit={autoSelectOnHit}
+          sendTriggeredIn={config.misc.sendTriggeredIn}
+          midiConnected={midi.connected}
+          lastTriggeredInput={lastTriggeredInput}
           onSelectPair={setSelectedPairIndex}
           onUpdatePad={handleUpdatePad}
           onUpdate3rdZone={handleUpdate3rdZone}
@@ -1893,6 +2300,16 @@ export default function App() {
           onSendPairSysex={handleSendPairSysex}
           onRequestPairSysex={handleRequestPairSysex}
           onOpenCustomNamesManager={() => setCustomNamesModalOpen(true)}
+          onOpenCrossPadCopy={(opts) =>
+            setCrossPadCopyModal({
+              open: true,
+              mode: opts?.mode ?? (selectedPairIndex === 0 ? 'input' : 'pair'),
+              pairIndex: opts?.pairIndex ?? selectedPairIndex,
+              padId: opts?.padId,
+            })
+          }
+          onToggleAutoSelectOnHit={handleToggleAutoSelectOnHit}
+          onEnableSendTriggeredIn={handleEnableSendTriggeredIn}
         />
       )}
 
@@ -2095,6 +2512,20 @@ export default function App() {
         onSendAllCustomNames={handleSendAllCustomNames}
         onEnableCustomPadNames={() => handleUpdateGlobal({ customPadNames: true })}
         compact
+      />
+
+      <CrossPadCopyModal
+        open={crossPadCopyModal.open}
+        onDismiss={() => setCrossPadCopyModal((prev) => ({ ...prev, open: false }))}
+        pads={config.pads}
+        thirdZones={config.thirdZones}
+        positionals={config.positionals}
+        customNames={config.customNames || []}
+        maxInputs={config.global.maxInputs}
+        initialPairIndex={crossPadCopyModal.pairIndex}
+        initialPadId={crossPadCopyModal.padId}
+        initialMode={crossPadCopyModal.mode}
+        onApplyCopy={handleCrossPadCopy}
       />
 
       {notice && (

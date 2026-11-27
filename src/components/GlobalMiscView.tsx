@@ -426,7 +426,7 @@ export const GlobalMiscView: React.FC<GlobalMiscViewProps> = ({
                   { key: 'inputsPriority', label: 'Inputs Priority' },
                   { key: 'altNoteChoking', label: 'Alt Note Choking' },
                   { key: 'midiThru', label: 'MIDI Thru Enabled' },
-                  { key: 'sendTriggeredIn', label: 'Send Triggered Input in Sysex' },
+                  { key: 'sendTriggeredIn', label: 'Send Triggered Input (Auto-Select on Hit)' },
                   { key: 'bigVuMeter', label: 'Big VU Meter on LCD' },
                   { key: 'bigVuSplit', label: 'Split Big VU Meter' },
                   { key: 'quickAccess', label: 'Quick Access Navigation' },
