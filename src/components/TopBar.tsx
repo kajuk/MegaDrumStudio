@@ -1,5 +1,5 @@
 import React from 'react';
-import { MidiConnectionPhase } from '../hooks/useWebMidi';
+import { MidiConnectionPhase, MidiPermissionState } from '../hooks/useWebMidi';
 
 export type WorkspaceTab = 'pads' | 'pedal' | 'curves' | 'global' | 'log' | 'sysex';
 
@@ -7,6 +7,8 @@ interface TopBarProps {
   activeTab: WorkspaceTab;
   onSelectTab: (tab: WorkspaceTab) => void;
   connectionPhase: MidiConnectionPhase;
+  canConnectMidi: boolean;
+  permissionState: MidiPermissionState;
   onPrimaryAction: () => void;
   syncFlash: boolean;
   isBusy: boolean;
@@ -25,22 +27,29 @@ export const TopBar: React.FC<TopBarProps> = ({
   activeTab,
   onSelectTab,
   connectionPhase,
+  canConnectMidi,
+  permissionState,
   onPrimaryAction,
   syncFlash,
   isBusy,
 }) => {
   const isReady = connectionPhase === 'connected';
+  const connectBlockedByPermission = !isReady && !canConnectMidi;
 
   const ctaLabel = isBusy
     ? 'Syncing...'
     : isReady
     ? 'Disconnect MIDI'
+    : permissionState === 'checking'
+    ? 'Checking MIDI...'
     : connectionPhase === 'no_ports' || connectionPhase === 'partial'
     ? 'Retry MIDI Ports'
     : 'Connect MIDI';
 
   const ctaClass = isReady
     ? 'border border-[var(--md-border-strong)] bg-[var(--md-control)] text-slate-800 dark:text-slate-100 hover:bg-[var(--md-hover)]'
+    : connectBlockedByPermission
+    ? 'bg-slate-400 dark:bg-slate-700 text-white cursor-not-allowed'
     : connectionPhase === 'error' || connectionPhase === 'sysex_blocked'
     ? 'bg-red-600 hover:bg-red-700 text-white'
     : 'bg-blue-600 hover:bg-blue-700 text-white';
@@ -102,9 +111,18 @@ export const TopBar: React.FC<TopBarProps> = ({
       <div className="shrink-0">
         <button
           type="button"
-          disabled={isBusy}
+          disabled={isBusy || connectBlockedByPermission}
+          title={
+            connectBlockedByPermission
+              ? permissionState === 'checking'
+                ? 'Checking WebMIDI permissions...'
+                : 'Grant WebMIDI permission first before connecting'
+              : isReady
+              ? 'Disconnect MIDI ports'
+              : 'Connect to MegaDrum via WebMIDI'
+          }
           onClick={onPrimaryAction}
-          className={`w-[152px] inline-flex items-center justify-center px-3 py-2 text-xs font-semibold rounded-md transition-colors whitespace-nowrap shrink-0 disabled:opacity-60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ${ctaClass}`}
+          className={`w-[152px] inline-flex items-center justify-center px-3 py-2 text-xs font-semibold rounded-md transition-colors whitespace-nowrap shrink-0 disabled:opacity-55 disabled:cursor-not-allowed focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ${ctaClass}`}
         >
           {ctaLabel}
         </button>

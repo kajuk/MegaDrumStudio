@@ -17,6 +17,7 @@ import {
 import {
   MidiConnectionPhase,
   MidiPermissionIssue,
+  MidiPermissionState,
   MidiPortInfo,
 } from '../hooks/useWebMidi';
 import { FACTORY_PRESETS } from '../data/presets';
@@ -29,6 +30,8 @@ interface WorkspaceToolbarProps {
   midiSupported: boolean;
   midiConnected: boolean;
   hasMidiAccess: boolean;
+  midiPermissionGranted: boolean;
+  permissionState: MidiPermissionState;
   connectionPhase: MidiConnectionPhase;
   connectionMessage: string;
   permissionIssue: MidiPermissionIssue;
@@ -70,6 +73,8 @@ export const WorkspaceToolbar: React.FC<WorkspaceToolbarProps> = ({
   midiSupported,
   midiConnected,
   hasMidiAccess,
+  midiPermissionGranted,
+  permissionState,
   connectionPhase,
   connectionMessage,
   permissionIssue,
@@ -108,6 +113,7 @@ export const WorkspaceToolbar: React.FC<WorkspaceToolbarProps> = ({
 }) => {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const isBusy = sysexStatus.code === 'working';
+  const canUseMidiControls = midiSupported && (midiPermissionGranted || midiConnected);
   const isPermissionAlert =
     connectionPhase === 'error' ||
     connectionPhase === 'sysex_blocked' ||
@@ -170,25 +176,31 @@ export const WorkspaceToolbar: React.FC<WorkspaceToolbarProps> = ({
                     : connectionPhase === 'sysex_blocked'
                     ? 'SysEx Blocked'
                     : 'Select Ports'
-                  : midiSupported
-                  ? connectionPhase === 'error'
-                    ? 'MIDI Error'
-                    : 'MIDI Disconnected'
-                  : 'Web MIDI Unsupp.'}
+                  : !midiSupported
+                  ? 'Web MIDI Unsupp.'
+                  : permissionState === 'checking'
+                  ? 'Checking MIDI...'
+                  : !midiPermissionGranted
+                  ? 'MIDI Perm. Req.'
+                  : connectionPhase === 'error'
+                  ? 'MIDI Error'
+                  : 'MIDI Disconnected'}
               </span>
             </span>
 
             <select
               aria-label="MIDI Input Port"
-              disabled={!midiSupported}
+              disabled={!canUseMidiControls}
               value={selectedInputId}
               title={
-                hasMidiAccess
+                !canUseMidiControls
+                  ? 'Grant WebMIDI permission first before selecting ports'
+                  : hasMidiAccess
                   ? 'Select MIDI Input port'
                   : 'Click to scan available MIDI Input ports before connecting'
               }
               onMouseDown={(e) => {
-                if (!hasMidiAccess && inputs.length === 0) {
+                if (canUseMidiControls && !hasMidiAccess && inputs.length === 0) {
                   e.preventDefault();
                   void onScanPorts();
                 }
@@ -220,15 +232,17 @@ export const WorkspaceToolbar: React.FC<WorkspaceToolbarProps> = ({
 
             <select
               aria-label="MIDI Output Port"
-              disabled={!midiSupported}
+              disabled={!canUseMidiControls}
               value={selectedOutputId}
               title={
-                hasMidiAccess
+                !canUseMidiControls
+                  ? 'Grant WebMIDI permission first before selecting ports'
+                  : hasMidiAccess
                   ? 'Select MIDI Output port'
                   : 'Click to scan available MIDI Output ports before connecting'
               }
               onMouseDown={(e) => {
-                if (!hasMidiAccess && outputs.length === 0) {
+                if (canUseMidiControls && !hasMidiAccess && outputs.length === 0) {
                   e.preventDefault();
                   void onScanPorts();
                 }
@@ -260,9 +274,16 @@ export const WorkspaceToolbar: React.FC<WorkspaceToolbarProps> = ({
 
             <button
               type="button"
+              disabled={!canUseMidiControls}
               onClick={midiConnected ? onDisconnectMidi : onConnectMidi}
-              title={midiConnected ? 'Disconnect MIDI ports' : 'Connect Web MIDI ports'}
-              className="w-[86px] inline-flex items-center justify-center px-2.5 py-1 text-xs font-medium rounded border border-[var(--md-border-strong)] bg-[var(--md-control)] text-slate-800 dark:text-slate-100 hover:bg-[var(--md-hover)] whitespace-nowrap shrink-0 transition-colors"
+              title={
+                !canUseMidiControls
+                  ? 'Grant WebMIDI permission first before connecting'
+                  : midiConnected
+                  ? 'Disconnect MIDI ports'
+                  : 'Connect Web MIDI ports'
+              }
+              className="w-[86px] inline-flex items-center justify-center px-2.5 py-1 text-xs font-medium rounded border border-[var(--md-border-strong)] bg-[var(--md-control)] text-slate-800 dark:text-slate-100 hover:bg-[var(--md-hover)] disabled:opacity-45 disabled:cursor-not-allowed whitespace-nowrap shrink-0 transition-colors"
             >
               {midiConnected ? 'Disconnect' : 'Connect'}
             </button>
@@ -482,6 +503,8 @@ export const WorkspaceToolbar: React.FC<WorkspaceToolbarProps> = ({
               <div className="font-semibold leading-snug">
                 {permissionIssue === 'addon_required'
                   ? 'WebMIDI Site Permission Add-on Required'
+                  : permissionIssue === 'prompt_required'
+                  ? 'WebMIDI Permission Required'
                   : permissionIssue === 'sysex_blocked'
                   ? 'WebMIDI SysEx Permission Required'
                   : permissionIssue === 'denied'
@@ -493,11 +516,11 @@ export const WorkspaceToolbar: React.FC<WorkspaceToolbarProps> = ({
                   <p>{alertText}</p>
                   {isInIframe ? (
                     <p>
-                      Embedded preview frames often block browser WebMIDI prompts and Firefox&apos;s site permission add-on installer. Open this studio in a standalone browser tab, allow the WebMIDI prompt, then click <strong>Connect MIDI</strong>.
+                      Embedded preview frames block browser WebMIDI prompts and Firefox&apos;s site permission add-on installer. Open this studio in a <strong>Standalone Tab</strong>, allow the WebMIDI prompt, then click <strong>Connect MIDI</strong>.
                     </p>
                   ) : isFirefox ? (
                     <p>
-                      In Firefox: click <strong>Request WebMIDI Permission</strong>, then accept <strong>Continue to Installation → Add</strong> in the address bar. If no prompt appears, click the <strong>puzzle / lock icon</strong> in the address bar or check <code className="px-1 py-0.5 rounded bg-red-100 dark:bg-red-900/60 font-mono">about:addons</code> → <strong>Site Permissions</strong>.
+                      In Firefox on Windows: click <strong>Request WebMIDI Permission</strong>, then accept <strong>Continue to Installation → Add</strong> in the address bar. If no popup appears, check the <strong>puzzle / lock icon</strong> in the address bar, verify this is not a Private Browsing window, or check <code className="px-1 py-0.5 rounded bg-red-100 dark:bg-red-900/60 font-mono">about:addons</code> → <strong>Site Permissions</strong>.
                     </p>
                   ) : (
                     <p>
@@ -506,7 +529,7 @@ export const WorkspaceToolbar: React.FC<WorkspaceToolbarProps> = ({
                   )}
                   {permissionAttemptCount > 0 && !permissionRequesting && (
                     <p className="font-mono text-[10px] text-red-700 dark:text-red-300">
-                      Browser declined prompt without opening dialog (check #{permissionAttemptCount}). Follow the address-bar / standalone-tab steps above.
+                      Browser declined without opening a dialog (attempt #{permissionAttemptCount}). {isInIframe ? 'Use Open in Standalone Tab.' : 'Check the address-bar permissions/puzzle icon or about:addons → Site Permissions.'}
                     </p>
                   )}
                 </div>

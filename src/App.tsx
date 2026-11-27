@@ -1515,6 +1515,8 @@ export default function App() {
         activeTab={activeTab}
         onSelectTab={setActiveTab}
         connectionPhase={midi.connectionPhase}
+        canConnectMidi={midi.midiPermissionGranted}
+        permissionState={midi.permissionState}
         onPrimaryAction={handlePrimaryTopBarAction}
         syncFlash={syncFlash}
         isBusy={midi.sysexStatus.code === 'working'}
@@ -1524,6 +1526,8 @@ export default function App() {
         midiSupported={midi.supported}
         midiConnected={midi.connected}
         hasMidiAccess={midi.hasMidiAccess}
+        midiPermissionGranted={midi.midiPermissionGranted}
+        permissionState={midi.permissionState}
         connectionPhase={midi.connectionPhase}
         connectionMessage={midi.connectionMessage}
         permissionIssue={midi.permissionIssue}

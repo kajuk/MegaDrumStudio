@@ -27,9 +27,18 @@ export type MidiConnectionPhase =
 
 export type MidiPermissionIssue =
   | 'none'
+  | 'prompt_required'
   | 'addon_required'
   | 'denied'
   | 'sysex_blocked'
+  | 'unsupported';
+
+export type MidiPermissionState =
+  | 'checking'
+  | 'granted'
+  | 'prompt'
+  | 'denied'
+  | 'unknown'
   | 'unsupported';
 
 export interface SysexTaskItem {
@@ -74,6 +83,7 @@ export function useWebMidi(options: UseWebMidiOptions = {}) {
     'Not connected — select ports or click Connect MIDI to detect MegaDrum'
   );
   const [permissionError, setPermissionError] = useState<string | null>(null);
+  const [permissionState, setPermissionState] = useState<MidiPermissionState>('checking');
   const [permissionIssue, setPermissionIssue] = useState<MidiPermissionIssue>('none');
   const [permissionRequesting, setPermissionRequesting] = useState<boolean>(false);
   const [permissionAttemptCount, setPermissionAttemptCount] = useState<number>(0);
@@ -195,7 +205,11 @@ export function useWebMidi(options: UseWebMidiOptions = {}) {
   );
 
   const invalidateMidiAccess = useCallback(
-    (reasonMessage?: string, issue: MidiPermissionIssue = 'none') => {
+    (
+      reasonMessage?: string,
+      issue: MidiPermissionIssue = 'none',
+      nextPermState?: MidiPermissionState
+    ) => {
       cancelAllWaiters();
       busyRef.current = false;
       if (accessRef.current) {
@@ -211,6 +225,9 @@ export function useWebMidi(options: UseWebMidiOptions = {}) {
       setOutputs([]);
       if (connectedRef.current) {
         setConnected(false);
+      }
+      if (nextPermState) {
+        setPermissionState(nextPermState);
       }
       if (reasonMessage) {
         setPermissionError(reasonMessage);
@@ -359,6 +376,9 @@ export function useWebMidi(options: UseWebMidiOptions = {}) {
       addonRetryOnFocusRef.current = false;
       setHasMidiAccess(true);
       setSysexAllowed(hasSysex);
+      if (hasSysex) {
+        setPermissionState('granted');
+      }
 
       const ports = refreshPorts(access);
       access.onstatechange = () => refreshPorts(access);
@@ -382,6 +402,7 @@ export function useWebMidi(options: UseWebMidiOptions = {}) {
         const msg =
           'Web MIDI is not supported in this browser. Use Firefox 108+, Chrome, or Edge to connect MegaDrum.';
         setPermissionError(msg);
+        setPermissionState('unsupported');
         setPermissionIssue('unsupported');
         return { ok: false, message: msg };
       }
@@ -393,9 +414,11 @@ export function useWebMidi(options: UseWebMidiOptions = {}) {
         const { hasSysex, nextInputs, nextOutputs } = await requestAccessAndRefresh();
         if (!hasSysex) {
           const msg = 'MIDI ports scanned without SysEx permission. Grant SysEx access to sync MegaDrum.';
+          setPermissionState('denied');
           setPermissionIssue('sysex_blocked');
           return { ok: false, message: msg };
         }
+        setPermissionState('granted');
         setPermissionIssue('none');
         return {
           ok: true,
@@ -408,6 +431,7 @@ export function useWebMidi(options: UseWebMidiOptions = {}) {
         }
         setPermissionError(formatted.message);
         setPermissionIssue(formatted.issue);
+        setPermissionState((prev) => (prev === 'granted' ? 'prompt' : prev === 'checking' ? 'prompt' : prev));
         if (opts.userTriggered) {
           setPermissionAttemptCount((c) => c + 1);
         }
@@ -423,6 +447,7 @@ export function useWebMidi(options: UseWebMidiOptions = {}) {
     const isSupported = typeof navigator !== 'undefined' && 'requestMIDIAccess' in navigator;
     setSupported(isSupported);
     if (!isSupported) {
+      setPermissionState('unsupported');
       setPermissionIssue('unsupported');
       return () => cancelAllWaiters();
     }
@@ -430,11 +455,24 @@ export function useWebMidi(options: UseWebMidiOptions = {}) {
     let cancelled = false;
     let watchedStatus: PermissionStatus | null = null;
 
+    const applyPromptStateOnLoad = () => {
+      setPermissionState('prompt');
+      setPermissionIssue(isFirefox ? 'addon_required' : 'prompt_required');
+      setPermissionError(
+        isFirefox
+          ? isInIframe
+            ? 'WebMIDI site permission add-on is not granted yet. Open this app in a standalone Firefox tab and grant WebMIDI permission before connecting.'
+            : 'WebMIDI site permission add-on is not granted yet. Click Request WebMIDI Permission to activate WebMIDI before connecting.'
+          : 'WebMIDI permission is not granted yet. Click Request WebMIDI Permission to allow MIDI devices (SysEx) before connecting.'
+      );
+    };
+
     const handlePermissionChange = () => {
       if (cancelled || !watchedStatus) return;
 
       if (watchedStatus.state === 'granted') {
         addonRetryOnFocusRef.current = false;
+        setPermissionState('granted');
         void scanPorts();
         return;
       }
@@ -444,12 +482,14 @@ export function useWebMidi(options: UseWebMidiOptions = {}) {
         hadGrantedAccessRef.current = false;
         invalidateMidiAccess(
           wasGranted
-            ? 'WebMIDI permissions were revoked. Re-requesting browser MIDI permission...'
+            ? 'WebMIDI permissions were revoked. Click Request WebMIDI Permission to grant access again.'
             : undefined,
-          wasGranted ? (isFirefox ? 'addon_required' : 'denied') : 'none'
+          isFirefox ? 'addon_required' : 'prompt_required',
+          'prompt'
         );
-        // Re-request WebMIDI add-on / site permissions automatically when revoked back to prompt
-        void scanPorts();
+        if (wasGranted && !isFirefox) {
+          void scanPorts();
+        }
         return;
       }
 
@@ -458,7 +498,8 @@ export function useWebMidi(options: UseWebMidiOptions = {}) {
         addonRetryOnFocusRef.current = false;
         invalidateMidiAccess(
           'WebMIDI permission was denied or revoked. Re-enable MIDI / WebMIDI site permission in your browser and click Request WebMIDI Permission.',
-          isFirefox ? 'addon_required' : 'denied'
+          isFirefox ? 'addon_required' : 'denied',
+          'denied'
         );
       }
     };
@@ -471,21 +512,18 @@ export function useWebMidi(options: UseWebMidiOptions = {}) {
 
         if (status) {
           if (status.state === 'granted' && (!accessRef.current || !sysexAllowedRef.current)) {
-            void scanPorts();
-            return;
-          }
-          if (status.state === 'prompt' && addonRetryOnFocusRef.current) {
-            addonRetryOnFocusRef.current = false;
+            setPermissionState('granted');
             void scanPorts();
             return;
           }
           if (status.state !== 'granted' && (accessRef.current || hadGrantedAccessRef.current)) {
             hadGrantedAccessRef.current = false;
             invalidateMidiAccess(
-              'WebMIDI permissions were revoked. Click Request WebMIDI Permission or Connect MIDI to reactivate.',
-              isFirefox ? 'addon_required' : 'denied'
+              'WebMIDI permissions were revoked. Click Request WebMIDI Permission to reactivate.',
+              isFirefox ? 'addon_required' : status.state === 'denied' ? 'denied' : 'prompt_required',
+              status.state
             );
-            if (status.state === 'prompt') {
+            if (status.state === 'prompt' && !isFirefox) {
               void scanPorts();
             }
           }
@@ -503,6 +541,12 @@ export function useWebMidi(options: UseWebMidiOptions = {}) {
       if (status) {
         watchedStatus = status;
         status.onchange = handlePermissionChange;
+        setPermissionState(status.state);
+
+        if (status.state === 'granted') {
+          await scanPorts();
+          return;
+        }
 
         if (status.state === 'denied') {
           setPermissionIssue(isFirefox ? 'addon_required' : 'denied');
@@ -513,11 +557,26 @@ export function useWebMidi(options: UseWebMidiOptions = {}) {
           );
           return;
         }
+
+        // status.state === 'prompt':
+        // In Firefox, calling requestMIDIAccess without a user gesture rejects immediately without
+        // showing the Site Permission Add-on prompt — gate Connect MIDI and present the prompt button.
+        if (isFirefox) {
+          applyPromptStateOnLoad();
+          return;
+        }
+
+        await scanPorts();
+        return;
       }
 
-      // On first load (granted, prompt, or Permissions API unavailable),
-      // request WebMIDI + SysEx permissions immediately so Firefox triggers the site permission add-on prompt.
-      await scanPorts();
+      // Permissions API for 'midi' unavailable in this browser
+      setPermissionState('unknown');
+      if (isFirefox) {
+        applyPromptStateOnLoad();
+      } else {
+        await scanPorts();
+      }
     })();
 
     window.addEventListener('focus', handleFocusOrVisible);
@@ -532,7 +591,12 @@ export function useWebMidi(options: UseWebMidiOptions = {}) {
       document.removeEventListener('visibilitychange', handleFocusOrVisible);
       cancelAllWaiters();
     };
-  }, [cancelAllWaiters, invalidateMidiAccess, isFirefox, queryMidiPermissionStatus, scanPorts]);
+  }, [cancelAllWaiters, invalidateMidiAccess, isFirefox, isInIframe, queryMidiPermissionStatus, scanPorts]);
+
+  const midiPermissionGranted =
+    supported &&
+    permissionIssue === 'none' &&
+    ((hasMidiAccess && sysexAllowed) || permissionState === 'granted');
 
   const connectionPhase: MidiConnectionPhase = (() => {
     if (!connected) return permissionError ? 'error' : 'disconnected';
@@ -1046,6 +1110,8 @@ export function useWebMidi(options: UseWebMidiOptions = {}) {
     connected,
     hasMidiAccess,
     sysexAllowed,
+    midiPermissionGranted,
+    permissionState,
     connectionPhase,
     connectionMessage,
     permissionError,
