@@ -11,6 +11,7 @@ import {
   ConnectionPopupData,
   ConnectionStatusPopup,
 } from './components/ConnectionStatusPopup';
+import { MidiAlertModal } from './components/MidiAlertModal';
 import { cloneConfig, FACTORY_PRESETS } from './data/presets';
 import { SysexBatchResult, SysexTaskItem, useWebMidi } from './hooks/useWebMidi';
 import {
@@ -137,6 +138,8 @@ export default function App() {
   const [syncFlash, setSyncFlash] = useState<boolean>(false);
   const [notice, setNotice] = useState<{ text: string; isError?: boolean } | null>(null);
   const [connectionPopup, setConnectionPopup] = useState<ConnectionPopupData | null>(null);
+  const [alertModalOpen, setAlertModalOpen] = useState<boolean>(false);
+  const lastAlertKeyRef = useRef<string>('');
   const [connectTriggerId, setConnectTriggerId] = useState<number>(0);
   const [detectedHardware, setDetectedHardware] = useState<{
     version: string | null;
@@ -1509,6 +1512,75 @@ export default function App() {
     [config, moduleSnapshot]
   );
 
+  const isPermissionAlert =
+    midi.connectionPhase === 'error' ||
+    midi.connectionPhase === 'sysex_blocked' ||
+    midi.permissionIssue !== 'none';
+  const hasAlert =
+    midi.sysexStatus.code === 'timeout' ||
+    midi.sysexStatus.code === 'midi_not_open' ||
+    midi.sysexStatus.code === 'error' ||
+    midi.sysexStatus.code === 'mismatch' ||
+    isPermissionAlert ||
+    midi.connectionPhase === 'no_ports';
+
+  const alertText =
+    midi.sysexStatus.code === 'timeout' ||
+    midi.sysexStatus.code === 'midi_not_open' ||
+    midi.sysexStatus.code === 'error' ||
+    midi.sysexStatus.code === 'mismatch'
+      ? midi.sysexStatus.message
+      : midi.connectionMessage;
+
+  const alertTitle =
+    midi.permissionIssue === 'addon_required'
+      ? 'WebMIDI Permission / Device Check'
+      : midi.permissionIssue === 'prompt_required'
+      ? 'WebMIDI Permission / Device Check'
+      : midi.permissionIssue === 'sysex_blocked'
+      ? 'WebMIDI SysEx Permission Required'
+      : midi.permissionIssue === 'denied'
+      ? 'WebMIDI Permission Blocked'
+      : midi.permissionIssue === 'backend_error'
+      ? 'No MIDI Devices or Access Error'
+      : midi.permissionIssue === 'unsupported'
+      ? 'WebMIDI Not Supported'
+      : midi.sysexStatus.code === 'timeout'
+      ? 'MegaDrum SysEx Timeout'
+      : midi.sysexStatus.code === 'midi_not_open'
+      ? 'MIDI Ports Not Open'
+      : midi.connectionPhase === 'no_ports'
+      ? 'No MIDI Ports Found'
+      : 'MIDI / SysEx Alert';
+
+  const alertKey = hasAlert
+    ? `${midi.permissionIssue}|${midi.connectionPhase}|${midi.sysexStatus.code}|${alertText}`
+    : '';
+
+  useEffect(() => {
+    if (!hasAlert) {
+      lastAlertKeyRef.current = '';
+      setAlertModalOpen(false);
+      return;
+    }
+    if (connectionPopup) {
+      lastAlertKeyRef.current = alertKey;
+      setAlertModalOpen(false);
+      return;
+    }
+    if (alertKey && alertKey !== lastAlertKeyRef.current) {
+      lastAlertKeyRef.current = alertKey;
+      setAlertModalOpen(true);
+    }
+  }, [alertKey, connectionPopup, hasAlert]);
+
+  const handleDismissAlertModal = useCallback(() => {
+    setAlertModalOpen(false);
+    if (!isPermissionAlert) {
+      midi.clearSysexStatus();
+    }
+  }, [isPermissionAlert, midi]);
+
   return (
     <div className="h-screen flex flex-col bg-[var(--md-canvas)] text-slate-900 dark:text-slate-100 overflow-hidden">
       <TopBar
@@ -1530,13 +1602,9 @@ export default function App() {
         permissionState={midi.permissionState}
         connectionPhase={midi.connectionPhase}
         connectionMessage={midi.connectionMessage}
-        permissionIssue={midi.permissionIssue}
-        permissionRequesting={midi.permissionRequesting}
-        permissionAttemptCount={midi.permissionAttemptCount}
-        isInIframe={midi.isInIframe}
-        isFirefox={midi.isFirefox}
+        hasAlert={hasAlert}
+        onOpenAlertModal={() => setAlertModalOpen(true)}
         sysexStatus={midi.sysexStatus}
-        onDismissSysexStatus={midi.clearSysexStatus}
         inputs={midi.inputs}
         outputs={midi.outputs}
         selectedInputId={midi.selectedInputId}
@@ -1544,7 +1612,6 @@ export default function App() {
         onSelectInput={midi.setSelectedInputId}
         onSelectOutput={midi.setSelectedOutputId}
         onScanPorts={() => void midi.scanPorts({ userTriggered: true })}
-        onRequestPermission={handleRequestMidiPermission}
         onConnectMidi={handleConnectMidi}
         onDisconnectMidi={handleDisconnectMidi}
         onGetAll={handleGetAllFromModule}
@@ -1738,6 +1805,21 @@ export default function App() {
         isInIframe={midi.isInIframe}
         isFirefox={midi.isFirefox}
         permissionRequesting={midi.permissionRequesting}
+      />
+
+      <MidiAlertModal
+        open={alertModalOpen && !connectionPopup}
+        title={alertTitle}
+        alertText={alertText}
+        isPermissionAlert={isPermissionAlert}
+        permissionIssue={midi.permissionIssue}
+        permissionRequesting={midi.permissionRequesting}
+        permissionAttemptCount={midi.permissionAttemptCount}
+        midiSupported={midi.supported}
+        isInIframe={midi.isInIframe}
+        isFirefox={midi.isFirefox}
+        onRequestPermission={handleRequestMidiPermission}
+        onDismiss={handleDismissAlertModal}
       />
 
       {notice && (

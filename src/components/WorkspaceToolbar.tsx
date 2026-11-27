@@ -5,18 +5,14 @@ import {
   ArrowUpFromLine,
   CheckCircle2,
   Download,
-  ExternalLink,
   FolderOpen,
-  KeyRound,
   Loader2,
   Play,
   Volume2,
   VolumeX,
-  X,
 } from 'lucide-react';
 import {
   MidiConnectionPhase,
-  MidiPermissionIssue,
   MidiPermissionState,
   MidiPortInfo,
 } from '../hooks/useWebMidi';
@@ -34,13 +30,9 @@ interface WorkspaceToolbarProps {
   permissionState: MidiPermissionState;
   connectionPhase: MidiConnectionPhase;
   connectionMessage: string;
-  permissionIssue: MidiPermissionIssue;
-  permissionRequesting: boolean;
-  permissionAttemptCount: number;
-  isInIframe: boolean;
-  isFirefox: boolean;
+  hasAlert: boolean;
+  onOpenAlertModal: () => void;
   sysexStatus: SysexStatusState;
-  onDismissSysexStatus: () => void;
   inputs: MidiPortInfo[];
   outputs: MidiPortInfo[];
   selectedInputId: string;
@@ -48,7 +40,6 @@ interface WorkspaceToolbarProps {
   onSelectInput: (id: string) => void;
   onSelectOutput: (id: string) => void;
   onScanPorts: () => void;
-  onRequestPermission: () => void;
   onConnectMidi: () => void;
   onDisconnectMidi: () => void;
   onGetAll: () => void;
@@ -77,13 +68,9 @@ export const WorkspaceToolbar: React.FC<WorkspaceToolbarProps> = ({
   permissionState,
   connectionPhase,
   connectionMessage,
-  permissionIssue,
-  permissionRequesting,
-  permissionAttemptCount,
-  isInIframe,
-  isFirefox,
+  hasAlert,
+  onOpenAlertModal,
   sysexStatus,
-  onDismissSysexStatus,
   inputs,
   outputs,
   selectedInputId,
@@ -91,7 +78,6 @@ export const WorkspaceToolbar: React.FC<WorkspaceToolbarProps> = ({
   onSelectInput,
   onSelectOutput,
   onScanPorts,
-  onRequestPermission,
   onConnectMidi,
   onDisconnectMidi,
   onGetAll,
@@ -114,27 +100,6 @@ export const WorkspaceToolbar: React.FC<WorkspaceToolbarProps> = ({
   const fileInputRef = useRef<HTMLInputElement>(null);
   const isBusy = sysexStatus.code === 'working';
   const canUseMidiControls = midiSupported && (midiPermissionGranted || midiConnected);
-  const isPermissionAlert =
-    connectionPhase === 'error' ||
-    connectionPhase === 'sysex_blocked' ||
-    permissionIssue !== 'none';
-  const hasAlert =
-    sysexStatus.code === 'timeout' ||
-    sysexStatus.code === 'midi_not_open' ||
-    sysexStatus.code === 'error' ||
-    sysexStatus.code === 'mismatch' ||
-    isPermissionAlert ||
-    connectionPhase === 'no_ports';
-
-  const alertText =
-    sysexStatus.code === 'timeout' ||
-    sysexStatus.code === 'midi_not_open' ||
-    sysexStatus.code === 'error' ||
-    sysexStatus.code === 'mismatch'
-      ? sysexStatus.message
-      : connectionMessage;
-
-  const standaloneUrl = typeof window !== 'undefined' ? window.location.href : '#';
 
   return (
     <div className="border-b border-[var(--md-border)] bg-[var(--md-toolbar)] shrink-0">
@@ -143,50 +108,79 @@ export const WorkspaceToolbar: React.FC<WorkspaceToolbarProps> = ({
         <div className="flex flex-wrap items-center gap-2.5">
           {/* Connection Status & Fixed-Slot Ports */}
           <div className="flex items-center gap-1.5 text-xs shrink-0">
-            <span
-              className={`w-[120px] inline-flex items-center gap-1.5 font-medium whitespace-nowrap shrink-0 ${
-                midiConnected
-                  ? connectionPhase === 'connected'
-                    ? 'text-emerald-700 dark:text-emerald-400'
-                    : 'text-amber-700 dark:text-amber-400'
-                  : connectionPhase === 'error'
-                  ? 'text-red-600 dark:text-red-400'
-                  : 'text-slate-600 dark:text-slate-400'
-              }`}
-              title={connectionMessage}
-            >
+            {hasAlert ? (
+              <button
+                type="button"
+                onClick={onOpenAlertModal}
+                title={`${connectionMessage} — Click to view details`}
+                className={`w-[120px] inline-flex items-center gap-1.5 font-medium whitespace-nowrap shrink-0 text-left hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 rounded ${
+                  midiConnected
+                    ? 'text-amber-700 dark:text-amber-400'
+                    : !midiPermissionGranted || connectionPhase === 'error'
+                    ? 'text-red-600 dark:text-red-400'
+                    : 'text-slate-600 dark:text-slate-400'
+                }`}
+              >
+                <span
+                  className={`w-2 h-2 rounded-full shrink-0 ${
+                    midiConnected
+                      ? 'bg-amber-500'
+                      : !midiPermissionGranted || connectionPhase === 'error'
+                      ? 'bg-red-500'
+                      : 'bg-slate-400'
+                  }`}
+                  aria-hidden="true"
+                />
+                <span className="truncate">
+                  {midiConnected
+                    ? connectionPhase === 'no_ports'
+                      ? '0 MIDI Ports'
+                      : connectionPhase === 'sysex_blocked'
+                      ? 'SysEx Blocked'
+                      : 'Select Ports'
+                    : !midiSupported
+                    ? 'Web MIDI Unsupp.'
+                    : permissionState === 'checking'
+                    ? 'Checking MIDI...'
+                    : !midiPermissionGranted
+                    ? 'MIDI Perm. Req.'
+                    : connectionPhase === 'error'
+                    ? 'MIDI Error'
+                    : 'MIDI Alert'}
+                </span>
+              </button>
+            ) : (
               <span
-                className={`w-2 h-2 rounded-full shrink-0 ${
+                className={`w-[120px] inline-flex items-center gap-1.5 font-medium whitespace-nowrap shrink-0 ${
                   midiConnected
                     ? connectionPhase === 'connected'
-                      ? 'bg-emerald-500'
-                      : 'bg-amber-500'
-                    : connectionPhase === 'error'
-                    ? 'bg-red-500'
-                    : 'bg-slate-400'
+                      ? 'text-emerald-700 dark:text-emerald-400'
+                      : 'text-amber-700 dark:text-amber-400'
+                    : 'text-slate-600 dark:text-slate-400'
                 }`}
-                aria-hidden="true"
-              />
-              <span className="truncate">
-                {midiConnected
-                  ? connectionPhase === 'connected'
-                    ? 'MIDI Connected'
-                    : connectionPhase === 'no_ports'
-                    ? '0 MIDI Ports'
-                    : connectionPhase === 'sysex_blocked'
-                    ? 'SysEx Blocked'
-                    : 'Select Ports'
-                  : !midiSupported
-                  ? 'Web MIDI Unsupp.'
-                  : permissionState === 'checking'
-                  ? 'Checking MIDI...'
-                  : !midiPermissionGranted
-                  ? 'MIDI Perm. Req.'
-                  : connectionPhase === 'error'
-                  ? 'MIDI Error'
-                  : 'MIDI Disconnected'}
+                title={connectionMessage}
+              >
+                <span
+                  className={`w-2 h-2 rounded-full shrink-0 ${
+                    midiConnected
+                      ? connectionPhase === 'connected'
+                        ? 'bg-emerald-500'
+                        : 'bg-amber-500'
+                      : 'bg-slate-400'
+                  }`}
+                  aria-hidden="true"
+                />
+                <span className="truncate">
+                  {midiConnected
+                    ? connectionPhase === 'connected'
+                      ? 'MIDI Connected'
+                      : 'Select Ports'
+                    : permissionState === 'checking'
+                    ? 'Checking MIDI...'
+                    : 'MIDI Disconnected'}
+                </span>
               </span>
-            </span>
+            )}
 
             <select
               aria-label="MIDI Input Port"
@@ -347,44 +341,70 @@ export const WorkspaceToolbar: React.FC<WorkspaceToolbarProps> = ({
             </label>
 
             {/* Fixed-width Live SysEx Status Readout */}
-            <span
-              title={sysexStatus.message}
-              className={`w-[92px] inline-flex items-center justify-center gap-1 px-2 py-1 text-[11px] font-mono tabular-nums rounded border whitespace-nowrap shrink-0 ${
-                sysexStatus.code === 'working'
-                  ? 'border-blue-300 dark:border-blue-800 bg-blue-50 dark:bg-blue-950/50 text-blue-700 dark:text-blue-300'
-                  : sysexStatus.code === 'ok'
-                  ? 'border-emerald-300 dark:border-emerald-800 bg-emerald-50 dark:bg-emerald-950/50 text-emerald-700 dark:text-emerald-300'
-                  : sysexStatus.code === 'idle'
-                  ? 'border-[var(--md-border)] bg-[var(--md-inset)] text-slate-500 dark:text-slate-400'
-                  : 'border-red-300 dark:border-red-800 bg-red-50 dark:bg-red-950/50 text-red-700 dark:text-red-300'
-              }`}
-            >
-              {sysexStatus.code === 'working' && (
-                <Loader2 className="w-3 h-3 animate-spin shrink-0" />
-              )}
-              {sysexStatus.code === 'ok' && (
-                <CheckCircle2 className="w-3 h-3 shrink-0" />
-              )}
-              {(sysexStatus.code === 'timeout' ||
-                sysexStatus.code === 'midi_not_open' ||
-                sysexStatus.code === 'error' ||
-                sysexStatus.code === 'mismatch') && (
-                <AlertCircle className="w-3 h-3 shrink-0" />
-              )}
-              <span className="truncate">
-                {sysexStatus.code === 'working' && sysexStatus.total
-                  ? `${sysexStatus.completed ?? 0}/${sysexStatus.total}`
-                  : sysexStatus.code === 'ok'
-                  ? 'SysEx OK'
-                  : sysexStatus.code === 'idle'
-                  ? 'SysEx Idle'
-                  : sysexStatus.code === 'timeout'
-                  ? 'Timeout'
-                  : sysexStatus.code === 'midi_not_open'
-                  ? 'No MIDI'
-                  : 'SysEx Err'}
+            {hasAlert ? (
+              <button
+                type="button"
+                onClick={onOpenAlertModal}
+                title={`${sysexStatus.message} — Click to open details`}
+                className={`w-[92px] inline-flex items-center justify-center gap-1 px-2 py-1 text-[11px] font-mono tabular-nums rounded border whitespace-nowrap shrink-0 cursor-pointer hover:brightness-95 dark:hover:brightness-110 transition-colors ${
+                  sysexStatus.code === 'working'
+                    ? 'border-blue-300 dark:border-blue-800 bg-blue-50 dark:bg-blue-950/50 text-blue-700 dark:text-blue-300'
+                    : sysexStatus.code === 'ok'
+                    ? 'border-emerald-300 dark:border-emerald-800 bg-emerald-50 dark:bg-emerald-950/50 text-emerald-700 dark:text-emerald-300'
+                    : sysexStatus.code === 'idle'
+                    ? 'border-red-300/70 dark:border-red-800/70 bg-red-50/70 dark:bg-red-950/40 text-red-700 dark:text-red-300'
+                    : 'border-red-300 dark:border-red-800 bg-red-50 dark:bg-red-950/50 text-red-700 dark:text-red-300'
+                }`}
+              >
+                {sysexStatus.code === 'working' && (
+                  <Loader2 className="w-3 h-3 animate-spin shrink-0" />
+                )}
+                {sysexStatus.code === 'ok' && (
+                  <CheckCircle2 className="w-3 h-3 shrink-0" />
+                )}
+                {sysexStatus.code !== 'working' && sysexStatus.code !== 'ok' && (
+                  <AlertCircle className="w-3 h-3 shrink-0" />
+                )}
+                <span className="truncate">
+                  {sysexStatus.code === 'working' && sysexStatus.total
+                    ? `${sysexStatus.completed ?? 0}/${sysexStatus.total}`
+                    : sysexStatus.code === 'ok'
+                    ? 'SysEx OK'
+                    : sysexStatus.code === 'idle'
+                    ? 'MIDI Info'
+                    : sysexStatus.code === 'timeout'
+                    ? 'Timeout'
+                    : sysexStatus.code === 'midi_not_open'
+                    ? 'No MIDI'
+                    : 'SysEx Err'}
+                </span>
+              </button>
+            ) : (
+              <span
+                title={sysexStatus.message}
+                className={`w-[92px] inline-flex items-center justify-center gap-1 px-2 py-1 text-[11px] font-mono tabular-nums rounded border whitespace-nowrap shrink-0 ${
+                  sysexStatus.code === 'working'
+                    ? 'border-blue-300 dark:border-blue-800 bg-blue-50 dark:bg-blue-950/50 text-blue-700 dark:text-blue-300'
+                    : sysexStatus.code === 'ok'
+                    ? 'border-emerald-300 dark:border-emerald-800 bg-emerald-50 dark:bg-emerald-950/50 text-emerald-700 dark:text-emerald-300'
+                    : 'border-[var(--md-border)] bg-[var(--md-inset)] text-slate-500 dark:text-slate-400'
+                }`}
+              >
+                {sysexStatus.code === 'working' && (
+                  <Loader2 className="w-3 h-3 animate-spin shrink-0" />
+                )}
+                {sysexStatus.code === 'ok' && (
+                  <CheckCircle2 className="w-3 h-3 shrink-0" />
+                )}
+                <span className="truncate">
+                  {sysexStatus.code === 'working' && sysexStatus.total
+                    ? `${sysexStatus.completed ?? 0}/${sysexStatus.total}`
+                    : sysexStatus.code === 'ok'
+                    ? 'SysEx OK'
+                    : 'SysEx Idle'}
+                </span>
               </span>
-            </span>
+            )}
           </div>
 
           <span className="hidden xl:inline text-slate-300 dark:text-slate-700" aria-hidden="true">
@@ -490,95 +510,6 @@ export const WorkspaceToolbar: React.FC<WorkspaceToolbarProps> = ({
           />
         </div>
       </div>
-
-      {/* Prominent Communication / WebMIDI Permission Helper Strip */}
-      {hasAlert && (
-        <div
-          role="alert"
-          className="px-6 py-2.5 bg-red-50 dark:bg-red-950/60 border-t border-red-200 dark:border-red-900/80 flex flex-wrap items-start justify-between gap-3 text-xs text-red-900 dark:text-red-100"
-        >
-          <div className="flex items-start gap-2.5 min-w-0 flex-1">
-            <AlertCircle className="w-4 h-4 text-red-600 dark:text-red-400 shrink-0 mt-0.5" />
-            <div className="space-y-1 min-w-0">
-              <div className="font-semibold leading-snug">
-                {permissionIssue === 'addon_required'
-                  ? 'WebMIDI Site Permission Add-on Required'
-                  : permissionIssue === 'prompt_required'
-                  ? 'WebMIDI Permission Required'
-                  : permissionIssue === 'sysex_blocked'
-                  ? 'WebMIDI SysEx Permission Required'
-                  : permissionIssue === 'denied'
-                  ? 'WebMIDI Permission Blocked'
-                  : alertText}
-              </div>
-              {isPermissionAlert ? (
-                <div className="text-[11px] leading-relaxed text-red-800 dark:text-red-200 space-y-0.5">
-                  <p>{alertText}</p>
-                  {isInIframe ? (
-                    <p>
-                      Embedded preview frames block browser WebMIDI prompts and Firefox&apos;s site permission add-on installer. Open this studio in a <strong>Standalone Tab</strong>, allow the WebMIDI prompt, then click <strong>Connect MIDI</strong>.
-                    </p>
-                  ) : isFirefox ? (
-                    <p>
-                      In Firefox on Windows: click <strong>Request WebMIDI Permission</strong>, then accept <strong>Continue to Installation → Add</strong> in the address bar. If no popup appears, check the <strong>puzzle / lock icon</strong> in the address bar, verify this is not a Private Browsing window, or check <code className="px-1 py-0.5 rounded bg-red-100 dark:bg-red-900/60 font-mono">about:addons</code> → <strong>Site Permissions</strong>.
-                    </p>
-                  ) : (
-                    <p>
-                      Click <strong>Request WebMIDI Permission</strong>, or click the site-settings icon in your browser&apos;s address bar to allow <strong>MIDI devices (SysEx)</strong>.
-                    </p>
-                  )}
-                  {permissionAttemptCount > 0 && !permissionRequesting && (
-                    <p className="font-mono text-[10px] text-red-700 dark:text-red-300">
-                      Browser declined without opening a dialog (attempt #{permissionAttemptCount}). {isInIframe ? 'Use Open in Standalone Tab.' : 'Check the address-bar permissions/puzzle icon or about:addons → Site Permissions.'}
-                    </p>
-                  )}
-                </div>
-              ) : (
-                <p className="text-[11px] text-red-800 dark:text-red-200 leading-relaxed">
-                  {alertText}
-                </p>
-              )}
-            </div>
-          </div>
-
-          <div className="flex flex-wrap items-center gap-2 shrink-0">
-            {isPermissionAlert && midiSupported && (
-              <button
-                type="button"
-                disabled={permissionRequesting}
-                onClick={onRequestPermission}
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-[11px] font-semibold rounded border border-red-300 dark:border-red-700 bg-white dark:bg-red-900/50 text-red-900 dark:text-white hover:bg-red-100 dark:hover:bg-red-900/80 disabled:opacity-60 whitespace-nowrap transition-colors"
-              >
-                {permissionRequesting ? (
-                  <Loader2 className="w-3.5 h-3.5 animate-spin shrink-0" />
-                ) : (
-                  <KeyRound className="w-3.5 h-3.5 shrink-0" />
-                )}
-                {permissionRequesting ? 'Waiting for prompt...' : 'Request WebMIDI Permission'}
-              </button>
-            )}
-            {isPermissionAlert && isInIframe && (
-              <a
-                href={standaloneUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-[11px] font-semibold rounded bg-red-700 text-white hover:bg-red-800 dark:bg-red-600 dark:hover:bg-red-500 whitespace-nowrap transition-colors"
-              >
-                <ExternalLink className="w-3.5 h-3.5 shrink-0" />
-                Open in Standalone Tab
-              </a>
-            )}
-            <button
-              type="button"
-              onClick={onDismissSysexStatus}
-              title="Dismiss alert"
-              className="p-1 text-red-600 dark:text-red-300 hover:bg-red-100 dark:hover:bg-red-900/50 rounded shrink-0"
-            >
-              <X className="w-3.5 h-3.5" />
-            </button>
-          </div>
-        </div>
-      )}
     </div>
   );
 };

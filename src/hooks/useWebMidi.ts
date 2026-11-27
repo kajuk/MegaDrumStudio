@@ -31,6 +31,7 @@ export type MidiPermissionIssue =
   | 'addon_required'
   | 'denied'
   | 'sysex_blocked'
+  | 'backend_error'
   | 'unsupported';
 
 export type MidiPermissionState =
@@ -273,7 +274,28 @@ export function useWebMidi(options: UseWebMidiOptions = {}) {
             : 'WebMIDI requires a site permission add-on to activate. Click Request WebMIDI Permission and accept the browser prompt in the address bar.',
         };
       }
-      if (rawName === 'NotAllowedError' || lower.includes('denied') || lower.includes('permission')) {
+      if (
+        rawName === 'NotFoundError' ||
+        rawName === 'AbortError' ||
+        rawName === 'InvalidStateError' ||
+        lower.includes('not found') ||
+        lower.includes('no midi') ||
+        lower.includes('device')
+      ) {
+        return {
+          isAddonError: false,
+          issue: 'backend_error',
+          message: rawMsg
+            ? `MIDI initialization failed (${rawMsg}). Check that MegaDrum is powered on and connected via USB MIDI.`
+            : 'No accessible MIDI devices or MIDI backend found. Connect MegaDrum via USB and try again.',
+        };
+      }
+      if (
+        rawName === 'NotAllowedError' ||
+        rawName === 'SecurityError' ||
+        lower.includes('denied') ||
+        lower.includes('permission')
+      ) {
         return {
           isAddonError: false,
           issue: 'denied',
@@ -283,14 +305,14 @@ export function useWebMidi(options: UseWebMidiOptions = {}) {
       if (rawMsg) {
         return {
           isAddonError: false,
-          issue: 'denied',
+          issue: 'backend_error',
           message: `MIDI access failed: ${rawMsg}`,
         };
       }
       return {
         isAddonError: false,
         issue: 'denied',
-        message: 'MIDI permission denied. Open in a standalone tab and allow MIDI access.',
+        message: 'MIDI permission denied or no MIDI devices accessible. Open in a standalone tab, allow MIDI access, and verify MegaDrum is connected.',
       };
     },
     [isInIframe]
