@@ -55,18 +55,34 @@ interface UseWebMidiOptions {
   onIncomingCC?: (channel: number, cc: number, value: number) => void;
 }
 
+const MIDI_IN_STORAGE_KEY = 'megadrum_studio_midi_in_v1';
+const MIDI_OUT_STORAGE_KEY = 'megadrum_studio_midi_out_v1';
+
 export function useWebMidi(options: UseWebMidiOptions = {}) {
   const [supported, setSupported] = useState<boolean>(false);
   const [connected, setConnected] = useState<boolean>(false);
+  const [hasMidiAccess, setHasMidiAccess] = useState<boolean>(false);
   const [sysexAllowed, setSysexAllowed] = useState<boolean>(false);
   const [connectionMessage, setConnectionMessage] = useState<string>(
-    'Not connected — click Connect MIDI to detect MegaDrum'
+    'Not connected — select ports or click Connect MIDI to detect MegaDrum'
   );
   const [permissionError, setPermissionError] = useState<string | null>(null);
   const [inputs, setInputs] = useState<MidiPortInfo[]>([]);
   const [outputs, setOutputs] = useState<MidiPortInfo[]>([]);
-  const [selectedInputId, setSelectedInputId] = useState<string>('');
-  const [selectedOutputId, setSelectedOutputId] = useState<string>('');
+  const [selectedInputId, setSelectedInputId] = useState<string>(() => {
+    try {
+      return localStorage.getItem(MIDI_IN_STORAGE_KEY) || '';
+    } catch {
+      return '';
+    }
+  });
+  const [selectedOutputId, setSelectedOutputId] = useState<string>(() => {
+    try {
+      return localStorage.getItem(MIDI_OUT_STORAGE_KEY) || '';
+    } catch {
+      return '';
+    }
+  });
   const [midiLogs, setMidiLogs] = useState<MidiEventLog[]>([]);
   const [sysexStatus, setSysexStatus] = useState<SysexStatusState>({
     code: 'idle',
@@ -76,8 +92,28 @@ export function useWebMidi(options: UseWebMidiOptions = {}) {
   const accessRef = useRef<MIDIAccess | null>(null);
   const waitersRef = useRef<PendingWaiter[]>([]);
   const busyRef = useRef<boolean>(false);
+  const selectedInputIdRef = useRef<string>(selectedInputId);
+  selectedInputIdRef.current = selectedInputId;
+  const selectedOutputIdRef = useRef<string>(selectedOutputId);
+  selectedOutputIdRef.current = selectedOutputId;
   const callbacksRef = useRef(options);
   callbacksRef.current = options;
+
+  useEffect(() => {
+    try {
+      if (selectedInputId) localStorage.setItem(MIDI_IN_STORAGE_KEY, selectedInputId);
+    } catch {
+      // Ignore storage errors
+    }
+  }, [selectedInputId]);
+
+  useEffect(() => {
+    try {
+      if (selectedOutputId) localStorage.setItem(MIDI_OUT_STORAGE_KEY, selectedOutputId);
+    } catch {
+      // Ignore storage errors
+    }
+  }, [selectedOutputId]);
 
   const appendLog = useCallback((entry: Omit<MidiEventLog, 'id' | 'timestamp'>) => {
     const now = new Date();
@@ -141,35 +177,101 @@ export function useWebMidi(options: UseWebMidiOptions = {}) {
     setInputs(nextInputs);
     setOutputs(nextOutputs);
 
-    let chosenIn = '';
-    let chosenOut = '';
+    const prevIn = selectedInputIdRef.current;
+    const chosenIn =
+      prevIn && nextInputs.some((i) => i.id === prevIn)
+        ? prevIn
+        : nextInputs.find((i) => i.name.toLowerCase().includes('megadrum'))?.id ||
+          nextInputs[0]?.id ||
+          '';
 
-    setSelectedInputId((prev) => {
-      if (prev && nextInputs.some((i) => i.id === prev)) {
-        chosenIn = prev;
-        return prev;
-      }
-      const md = nextInputs.find((i) => i.name.toLowerCase().includes('megadrum'));
-      chosenIn = md?.id || nextInputs[0]?.id || '';
-      return chosenIn;
-    });
-    setSelectedOutputId((prev) => {
-      if (prev && nextOutputs.some((o) => o.id === prev)) {
-        chosenOut = prev;
-        return prev;
-      }
-      const md = nextOutputs.find((o) => o.name.toLowerCase().includes('megadrum'));
-      chosenOut = md?.id || nextOutputs[0]?.id || '';
-      return chosenOut;
-    });
+    const prevOut = selectedOutputIdRef.current;
+    const chosenOut =
+      prevOut && nextOutputs.some((o) => o.id === prevOut)
+        ? prevOut
+        : nextOutputs.find((o) => o.name.toLowerCase().includes('megadrum'))?.id ||
+          nextOutputs[0]?.id ||
+          '';
+
+    selectedInputIdRef.current = chosenIn;
+    selectedOutputIdRef.current = chosenOut;
+    setSelectedInputId(chosenIn);
+    setSelectedOutputId(chosenOut);
 
     return { nextInputs, nextOutputs, chosenIn, chosenOut };
   }, []);
 
+  const requestAccessAndRefresh = useCallback(async () => {
+    if (accessRef.current && sysexAllowed) {
+      const ports = refreshPorts(accessRef.current);
+      return { access: accessRef.current, hasSysex: true, ...ports };
+    }
+
+    let access: MIDIAccess;
+    let hasSysex = true;
+    try {
+      access = await navigator.requestMIDIAccess({ sysex: true });
+    } catch {
+      access = await navigator.requestMIDIAccess({ sysex: false });
+      hasSysex = false;
+    }
+
+    accessRef.current = access;
+    setHasMidiAccess(true);
+    setSysexAllowed(hasSysex);
+
+    const ports = refreshPorts(access);
+    access.onstatechange = () => refreshPorts(access);
+
+    return { access, hasSysex, ...ports };
+  }, [refreshPorts, sysexAllowed]);
+
+  const scanPorts = useCallback(async (): Promise<{ ok: boolean; message: string }> => {
+    if (!('requestMIDIAccess' in navigator)) {
+      const msg =
+        'Web MIDI is not supported in this browser. Use Firefox 108+, Chrome, or Edge to connect MegaDrum.';
+      setPermissionError(msg);
+      return { ok: false, message: msg };
+    }
+
+    try {
+      setPermissionError(null);
+      const { hasSysex, nextInputs, nextOutputs } = await requestAccessAndRefresh();
+      if (!hasSysex) {
+        const msg = 'MIDI ports scanned without SysEx permission.';
+        return { ok: false, message: msg };
+      }
+      return {
+        ok: true,
+        message: `Found ${nextInputs.length} MIDI In and ${nextOutputs.length} MIDI Out ports.`,
+      };
+    } catch (err) {
+      const msg =
+        err instanceof Error
+          ? `MIDI access failed: ${err.message}`
+          : 'MIDI permission denied. Open in a standalone tab and allow MIDI access.';
+      setPermissionError(msg);
+      return { ok: false, message: msg };
+    }
+  }, [requestAccessAndRefresh]);
+
   useEffect(() => {
-    setSupported(typeof navigator !== 'undefined' && 'requestMIDIAccess' in navigator);
+    const isSupported = typeof navigator !== 'undefined' && 'requestMIDIAccess' in navigator;
+    setSupported(isSupported);
+    if (isSupported && navigator.permissions?.query) {
+      navigator.permissions
+        .query({ name: 'midi' as PermissionName, sysex: true } as PermissionDescriptor)
+        .then((status) => {
+          if (status.state === 'granted') {
+            void scanPorts();
+          }
+        })
+        .catch(() => {
+          // Permissions API for 'midi' not supported in this browser; scan on demand
+        });
+    }
     return () => cancelAllWaiters();
-  }, [cancelAllWaiters]);
+  }, [cancelAllWaiters, scanPorts]);
 
   const connectionPhase: MidiConnectionPhase = (() => {
     if (!connected) return permissionError ? 'error' : 'disconnected';
@@ -221,21 +323,10 @@ export function useWebMidi(options: UseWebMidiOptions = {}) {
 
     try {
       setPermissionError(null);
-      let access: MIDIAccess;
-      let hasSysex = true;
-      try {
-        access = await navigator.requestMIDIAccess({ sysex: true });
-      } catch {
-        access = await navigator.requestMIDIAccess({ sysex: false });
-        hasSysex = false;
-      }
+      const { hasSysex, nextInputs, nextOutputs, chosenIn, chosenOut } =
+        await requestAccessAndRefresh();
 
-      accessRef.current = access;
       setConnected(true);
-      setSysexAllowed(hasSysex);
-
-      const { nextInputs, nextOutputs } = refreshPorts(access);
-      access.onstatechange = () => refreshPorts(access);
 
       let resultMsg = '';
       if (!hasSysex) {
@@ -248,11 +339,9 @@ export function useWebMidi(options: UseWebMidiOptions = {}) {
           'Web MIDI enabled, but no MIDI ports were found. Connect your MegaDrum USB cable and try again.';
         setSysexStatus({ code: 'midi_not_open', message: resultMsg });
       } else {
-        const mdIn =
-          nextInputs.find((i) => i.name.toLowerCase().includes('megadrum')) || nextInputs[0];
-        const mdOut =
-          nextOutputs.find((o) => o.name.toLowerCase().includes('megadrum')) || nextOutputs[0];
-        resultMsg = `MIDI Connected (${mdIn?.name || 'No In'} / ${mdOut?.name || 'No Out'})`;
+        const activeIn = nextInputs.find((i) => i.id === chosenIn) || nextInputs[0];
+        const activeOut = nextOutputs.find((o) => o.id === chosenOut) || nextOutputs[0];
+        resultMsg = `MIDI Connected (${activeIn?.name || 'No In'} / ${activeOut?.name || 'No Out'})`;
         setSysexStatus({ code: 'ok', message: resultMsg });
       }
 
@@ -281,7 +370,7 @@ export function useWebMidi(options: UseWebMidiOptions = {}) {
       });
       return { ok: false, message: msg };
     }
-  }, [appendLog, refreshPorts]);
+  }, [appendLog, requestAccessAndRefresh]);
 
   const disconnect = useCallback(() => {
     cancelAllWaiters();
@@ -290,10 +379,8 @@ export function useWebMidi(options: UseWebMidiOptions = {}) {
       accessRef.current.inputs.forEach((input) => {
         input.onmidimessage = null;
       });
-      accessRef.current = null;
     }
     setConnected(false);
-    setSysexAllowed(false);
     setPermissionError(null);
     setSysexStatus({ code: 'idle', message: 'Disconnected' });
   }, [cancelAllWaiters]);
@@ -653,6 +740,7 @@ export function useWebMidi(options: UseWebMidiOptions = {}) {
   return {
     supported,
     connected,
+    hasMidiAccess,
     sysexAllowed,
     connectionPhase,
     connectionMessage,
@@ -667,6 +755,7 @@ export function useWebMidi(options: UseWebMidiOptions = {}) {
     sysexStatus,
     setSysexStatus,
     clearSysexStatus,
+    scanPorts,
     connect,
     disconnect,
     sendSysex,

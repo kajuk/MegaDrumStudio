@@ -64,6 +64,7 @@ import {
 } from './utils/theme';
 
 const STORAGE_KEY = 'megadrum_studio_config_v2';
+const LIVE_UPDATES_STORAGE_KEY = 'megadrum_studio_live_updates_v1';
 
 function downloadBlob(data: BlobPart, filename: string, mime: string) {
   const blob = new Blob([data], { type: mime });
@@ -129,7 +130,21 @@ export default function App() {
   const [lastRawAdc, setLastRawAdc] = useState<number | null>(null);
   const [syncFlash, setSyncFlash] = useState<boolean>(false);
   const [notice, setNotice] = useState<{ text: string; isError?: boolean } | null>(null);
+  const [liveUpdates, setLiveUpdates] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem(LIVE_UPDATES_STORAGE_KEY) === 'true';
+    } catch {
+      return false;
+    }
+  });
   const inBatchRef = useRef<boolean>(false);
+  const liveUpdatesRef = useRef<boolean>(liveUpdates);
+  liveUpdatesRef.current = liveUpdates;
+  const dirtyBlocksRef = useRef<Set<string>>(new Set());
+  const liveFlushTimerRef = useRef<number | null>(null);
+  const liveSendInFlightRef = useRef<boolean>(false);
+  const connectionPhaseRef = useRef<string>('disconnected');
+  const flushLiveUpdatesRef = useRef<() => void>(() => {});
 
   const showNotice = useCallback((text: string, isError = false) => {
     setNotice({ text, isError });
@@ -161,6 +176,14 @@ export default function App() {
     }
   }, [config]);
 
+  useEffect(() => {
+    try {
+      localStorage.setItem(LIVE_UPDATES_STORAGE_KEY, liveUpdates ? 'true' : 'false');
+    } catch {
+      // Ignore quota errors
+    }
+  }, [liveUpdates]);
+
   const handleIncomingSysex = useCallback(
     (packet: Uint8Array) => {
       const current = configRef.current;
@@ -169,7 +192,9 @@ export default function App() {
         if (res.pedalRawLevel !== undefined) {
           setLastRawAdc(res.pedalRawLevel);
         }
-        setConfig(res.updated);
+        if (!liveSendInFlightRef.current) {
+          setConfig(res.updated);
+        }
         setModuleSnapshot((prevSnap) => updateSnapshotFromDecodedSysex(prevSnap, res, packet));
         if (!inBatchRef.current) {
           showNotice(res.description);
@@ -221,6 +246,200 @@ export default function App() {
     onIncomingNote: handleIncomingNote,
     onIncomingCC: handleIncomingCC,
   });
+
+  connectionPhaseRef.current = midi.connectionPhase;
+
+  const flushLiveUpdates = useCallback(async () => {
+    if (liveFlushTimerRef.current !== null) {
+      window.clearTimeout(liveFlushTimerRef.current);
+      liveFlushTimerRef.current = null;
+    }
+    if (!liveUpdatesRef.current || connectionPhaseRef.current !== 'connected') {
+      dirtyBlocksRef.current.clear();
+      return;
+    }
+    if (inBatchRef.current || liveSendInFlightRef.current) {
+      liveFlushTimerRef.current = window.setTimeout(() => {
+        flushLiveUpdatesRef.current();
+      }, 140);
+      return;
+    }
+    if (dirtyBlocksRef.current.size === 0) return;
+
+    const keys = Array.from(dirtyBlocksRef.current);
+    dirtyBlocksRef.current.clear();
+
+    const cfg = configRef.current;
+    const ch = cfg.chainId;
+    const tasks: SysexTaskItem[] = [];
+
+    for (const key of keys) {
+      if (key === 'global') {
+        tasks.push({
+          kind: 'send',
+          packet: encodeGlobalMiscSysex(cfg),
+          verifyRequest: buildRequestGlobalMiscSysex(ch),
+          expectedCmd: MD_SYSEX_CMD.GLOBAL_MISC,
+          label: 'Global Misc',
+        });
+      } else if (key === 'misc') {
+        tasks.push({
+          kind: 'send',
+          packet: encodeMiscSysex(cfg),
+          verifyRequest: buildRequestMiscSysex(ch),
+          expectedCmd: MD_SYSEX_CMD.MISC,
+          label: 'Misc',
+        });
+      } else if (key === 'pedal') {
+        tasks.push({
+          kind: 'send',
+          packet: encodePedalSysex(cfg),
+          verifyRequest: buildRequestPedalSysex(ch),
+          expectedCmd: MD_SYSEX_CMD.PEDAL,
+          label: 'Hi-Hat Pedal',
+        });
+      } else if (key.startsWith('pad:')) {
+        const idx = Number(key.slice(4));
+        const pad = cfg.pads[idx];
+        if (pad) {
+          tasks.push({
+            kind: 'send',
+            packet: encodePadSysex(pad, ch),
+            verifyRequest: buildRequestPadSysex(idx, ch),
+            expectedCmd: MD_SYSEX_CMD.PAD,
+            expectedId: idx + 1,
+            label: `Input ${idx + 1}`,
+          });
+        }
+      } else if (key.startsWith('third:')) {
+        const zIdx = Number(key.slice(6));
+        const zone = cfg.thirdZones[zIdx];
+        if (zone) {
+          tasks.push({
+            kind: 'send',
+            packet: encode3rdSysex(zone, ch),
+            verifyRequest: buildRequest3rdSysex(zIdx, ch),
+            expectedCmd: MD_SYSEX_CMD.THIRD_ZONE,
+            expectedId: zIdx,
+            label: `3rd Zone (Pair ${zIdx + 1})`,
+          });
+        }
+      } else if (key.startsWith('pos:')) {
+        const idx = Number(key.slice(4));
+        const posId = getSysexPosIdForInput(idx, cfg.mcuTypeId);
+        if (posId !== null && cfg.positionals[idx]) {
+          tasks.push({
+            kind: 'send',
+            packet: encodePositionalSysex(cfg.positionals[idx], posId, ch),
+            verifyRequest: buildRequestPosSysex(posId, ch),
+            expectedCmd: MD_SYSEX_CMD.POS,
+            expectedId: posId,
+            label: `Positional ${idx + 1}`,
+          });
+        }
+      } else if (key.startsWith('curve:')) {
+        const cIdx = Number(key.slice(6));
+        const curve = cfg.curves[cIdx];
+        if (curve) {
+          tasks.push({
+            kind: 'send',
+            packet: encodeCurveSysex(cIdx, curve.points, ch),
+            verifyRequest: buildRequestCurveSysex(cIdx, ch),
+            expectedCmd: MD_SYSEX_CMD.CURVE,
+            expectedId: cIdx,
+            label: `Curve ${cIdx + 1}`,
+          });
+        }
+      }
+    }
+
+    if (tasks.length === 0) return;
+
+    liveSendInFlightRef.current = true;
+    inBatchRef.current = true;
+    const res = await midi.runSysexQueue(tasks, {
+      maxRetries: 2,
+      timeoutMs: 650,
+      abortOnFirstTimeout: true,
+    });
+    inBatchRef.current = false;
+    liveSendInFlightRef.current = false;
+
+    if (res.ok) {
+      setSyncFlash(true);
+      window.setTimeout(() => setSyncFlash(false), 900);
+    } else {
+      const errMsg =
+        res.reason === 'midi_not_open'
+          ? 'Live Update paused: MIDI ports are not open.'
+          : res.reason === 'timeout'
+          ? `Live Update timeout for "${res.failedLabel || 'parameter'}". Check USB cable, MIDI ports, and Chain ID.`
+          : `Live Update stopped (${res.completed}/${res.total} sent).`;
+      showNotice(errMsg, true);
+    }
+
+    if (
+      dirtyBlocksRef.current.size > 0 &&
+      liveUpdatesRef.current &&
+      connectionPhaseRef.current === 'connected'
+    ) {
+      liveFlushTimerRef.current = window.setTimeout(() => {
+        flushLiveUpdatesRef.current();
+      }, 80);
+    }
+  }, [midi, showNotice]);
+
+  flushLiveUpdatesRef.current = flushLiveUpdates;
+
+  const enqueueLiveBlocks = useCallback((keys: string[]) => {
+    if (!liveUpdatesRef.current || connectionPhaseRef.current !== 'connected') return;
+    for (const key of keys) {
+      dirtyBlocksRef.current.add(key);
+    }
+    if (liveFlushTimerRef.current !== null) {
+      window.clearTimeout(liveFlushTimerRef.current);
+    }
+    liveFlushTimerRef.current = window.setTimeout(() => {
+      flushLiveUpdatesRef.current();
+    }, 140);
+  }, []);
+
+  const handleToggleLiveUpdates = useCallback(() => {
+    setLiveUpdates((prev) => {
+      const next = !prev;
+      if (!next) {
+        if (liveFlushTimerRef.current !== null) {
+          window.clearTimeout(liveFlushTimerRef.current);
+          liveFlushTimerRef.current = null;
+        }
+        dirtyBlocksRef.current.clear();
+        showNotice('Live Updates disabled');
+      } else if (midi.connectionPhase !== 'connected') {
+        showNotice('Live Updates enabled — connect MegaDrum MIDI ports to auto-send changes');
+      } else {
+        showNotice('Live Updates enabled — parameter edits will auto-send to MegaDrum');
+      }
+      return next;
+    });
+  }, [midi.connectionPhase, showNotice]);
+
+  useEffect(() => {
+    if (!liveUpdates || midi.connectionPhase !== 'connected') {
+      if (liveFlushTimerRef.current !== null) {
+        window.clearTimeout(liveFlushTimerRef.current);
+        liveFlushTimerRef.current = null;
+      }
+      dirtyBlocksRef.current.clear();
+    }
+  }, [liveUpdates, midi.connectionPhase]);
+
+  useEffect(() => {
+    return () => {
+      if (liveFlushTimerRef.current !== null) {
+        window.clearTimeout(liveFlushTimerRef.current);
+      }
+    };
+  }, []);
 
   const executeQueue = useCallback(
     async (
@@ -288,31 +507,46 @@ export default function App() {
   );
 
   // Config mutators
-  const handleUpdatePad = useCallback((padId: number, patch: Partial<PadConfig>) => {
-    setSelectedPresetId('custom');
-    setConfig((prev) => ({
-      ...prev,
-      pads: prev.pads.map((p) => (p.id === padId ? { ...p, ...patch } : p)),
-    }));
-  }, []);
+  const handleUpdatePad = useCallback(
+    (padId: number, patch: Partial<PadConfig>) => {
+      setSelectedPresetId('custom');
+      setConfig((prev) => ({
+        ...prev,
+        pads: prev.pads.map((p) => (p.id === padId ? { ...p, ...patch } : p)),
+      }));
+      const changedKeys = Object.keys(patch);
+      if (changedKeys.some((k) => k !== 'name')) {
+        enqueueLiveBlocks([`pad:${padId - 1}`]);
+      }
+    },
+    [enqueueLiveBlocks]
+  );
 
-  const handleUpdate3rdZone = useCallback((pairIndex: number, patch: Partial<ThirdZoneConfig>) => {
-    const zIdx = pairIndex - 1;
-    setSelectedPresetId('custom');
-    setConfig((prev) => ({
-      ...prev,
-      thirdZones: prev.thirdZones.map((z, idx) => (idx === zIdx ? { ...z, ...patch } : z)),
-    }));
-  }, []);
+  const handleUpdate3rdZone = useCallback(
+    (pairIndex: number, patch: Partial<ThirdZoneConfig>) => {
+      const zIdx = pairIndex - 1;
+      setSelectedPresetId('custom');
+      setConfig((prev) => ({
+        ...prev,
+        thirdZones: prev.thirdZones.map((z, idx) => (idx === zIdx ? { ...z, ...patch } : z)),
+      }));
+      enqueueLiveBlocks([`third:${zIdx}`]);
+    },
+    [enqueueLiveBlocks]
+  );
 
-  const handleUpdatePositional = useCallback((padId: number, patch: Partial<PositionalConfig>) => {
-    const pIdx = padId - 1;
-    setSelectedPresetId('custom');
-    setConfig((prev) => ({
-      ...prev,
-      positionals: prev.positionals.map((pos, idx) => (idx === pIdx ? { ...pos, ...patch } : pos)),
-    }));
-  }, []);
+  const handleUpdatePositional = useCallback(
+    (padId: number, patch: Partial<PositionalConfig>) => {
+      const pIdx = padId - 1;
+      setSelectedPresetId('custom');
+      setConfig((prev) => ({
+        ...prev,
+        positionals: prev.positionals.map((pos, idx) => (idx === pIdx ? { ...pos, ...patch } : pos)),
+      }));
+      enqueueLiveBlocks([`pos:${pIdx}`]);
+    },
+    [enqueueLiveBlocks]
+  );
 
   const handleApplyZoneTemplate = useCallback(
     (pairIndex: number, template: ZoneMode) => {
@@ -370,9 +604,10 @@ export default function App() {
         }
         return next;
       });
+      enqueueLiveBlocks([`pad:${leftIdx}`, `pad:${rightIdx}`, `third:${zIdx}`]);
       showNotice(`Applied ${template.replace(/_/g, ' ')} template to Pair ${pairIndex}`);
     },
-    [showNotice]
+    [enqueueLiveBlocks, showNotice]
   );
 
   const handleResetPair = useCallback(
@@ -395,37 +630,61 @@ export default function App() {
         }
         return next;
       });
+      if (pairIndex === 0) {
+        enqueueLiveBlocks(['pad:0', 'pos:0']);
+      } else {
+        const lIdx = pairIndex * 2 - 1;
+        const rIdx = pairIndex * 2;
+        const zIdx = pairIndex - 1;
+        enqueueLiveBlocks([`pad:${lIdx}`, `pad:${rIdx}`, `third:${zIdx}`, `pos:${lIdx}`, `pos:${rIdx}`]);
+      }
       showNotice(
         pairIndex === 0
           ? 'Input 1 (Kick) reset to factory defaults'
           : `Pair ${pairIndex} reset to factory defaults`
       );
     },
-    [showNotice]
+    [enqueueLiveBlocks, showNotice]
   );
 
-  const handleUpdatePedal = useCallback((patch: Partial<PedalConfig>) => {
-    setSelectedPresetId('custom');
-    setConfig((prev) => ({ ...prev, pedal: { ...prev.pedal, ...patch } }));
-  }, []);
+  const handleUpdatePedal = useCallback(
+    (patch: Partial<PedalConfig>) => {
+      setSelectedPresetId('custom');
+      setConfig((prev) => ({ ...prev, pedal: { ...prev.pedal, ...patch } }));
+      enqueueLiveBlocks(['pedal']);
+    },
+    [enqueueLiveBlocks]
+  );
 
-  const handleUpdateCurve = useCallback((curveIdx: number, points: number[]) => {
-    setSelectedPresetId('custom');
-    setConfig((prev) => ({
-      ...prev,
-      curves: prev.curves.map((c, idx) => (idx === curveIdx ? { ...c, points } : c)),
-    }));
-  }, []);
+  const handleUpdateCurve = useCallback(
+    (curveIdx: number, points: number[]) => {
+      setSelectedPresetId('custom');
+      setConfig((prev) => ({
+        ...prev,
+        curves: prev.curves.map((c, idx) => (idx === curveIdx ? { ...c, points } : c)),
+      }));
+      enqueueLiveBlocks([`curve:${curveIdx}`]);
+    },
+    [enqueueLiveBlocks]
+  );
 
-  const handleUpdateGlobal = useCallback((patch: Partial<GlobalConfig>) => {
-    setSelectedPresetId('custom');
-    setConfig((prev) => ({ ...prev, global: { ...prev.global, ...patch } }));
-  }, []);
+  const handleUpdateGlobal = useCallback(
+    (patch: Partial<GlobalConfig>) => {
+      setSelectedPresetId('custom');
+      setConfig((prev) => ({ ...prev, global: { ...prev.global, ...patch } }));
+      enqueueLiveBlocks(['global']);
+    },
+    [enqueueLiveBlocks]
+  );
 
-  const handleUpdateMisc = useCallback((patch: Partial<MiscConfig>) => {
-    setSelectedPresetId('custom');
-    setConfig((prev) => ({ ...prev, misc: { ...prev.misc, ...patch } }));
-  }, []);
+  const handleUpdateMisc = useCallback(
+    (patch: Partial<MiscConfig>) => {
+      setSelectedPresetId('custom');
+      setConfig((prev) => ({ ...prev, misc: { ...prev.misc, ...patch } }));
+      enqueueLiveBlocks(['misc']);
+    },
+    [enqueueLiveBlocks]
+  );
 
   const handleUpdateChainId = useCallback((chainId: number) => {
     setConfig((prev) => ({ ...prev, chainId: Math.max(0, Math.min(3, chainId)) }));
@@ -1014,12 +1273,13 @@ export default function App() {
   }, [executeQueue]);
 
   const handlePrimaryTopBarAction = useCallback(async () => {
-    if (midi.connectionPhase !== 'connected') {
-      await handleConnectMidi();
+    if (midi.connectionPhase === 'connected') {
+      midi.disconnect();
+      showNotice('MIDI disconnected');
     } else {
-      await handleSendAllToModule();
+      await handleConnectMidi();
     }
-  }, [handleConnectMidi, handleSendAllToModule, midi.connectionPhase]);
+  }, [handleConnectMidi, midi, showNotice]);
 
   const handleImportFile = useCallback(
     async (file: File) => {
@@ -1109,6 +1369,7 @@ export default function App() {
       <WorkspaceToolbar
         midiSupported={midi.supported}
         midiConnected={midi.connected}
+        hasMidiAccess={midi.hasMidiAccess}
         connectionPhase={midi.connectionPhase}
         connectionMessage={midi.connectionMessage}
         sysexStatus={midi.sysexStatus}
@@ -1119,10 +1380,13 @@ export default function App() {
         selectedOutputId={midi.selectedOutputId}
         onSelectInput={midi.setSelectedInputId}
         onSelectOutput={midi.setSelectedOutputId}
+        onScanPorts={midi.scanPorts}
         onConnectMidi={handleConnectMidi}
         onDisconnectMidi={midi.disconnect}
         onGetAll={handleGetAllFromModule}
         onSendAll={handleSendAllToModule}
+        liveUpdates={liveUpdates}
+        onToggleLiveUpdates={handleToggleLiveUpdates}
         unsyncedCount={syncTotals.modifiedFields}
         selectedPresetId={selectedPresetId}
         onSelectPreset={handleSelectPreset}

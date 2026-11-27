@@ -33,15 +33,13 @@ export const TopBar: React.FC<TopBarProps> = ({
   const ctaLabel = isBusy
     ? 'Syncing...'
     : isReady
-    ? syncFlash
-      ? 'Sent All to MegaDrum'
-      : 'Send All'
+    ? 'Disconnect MIDI'
     : connectionPhase === 'no_ports' || connectionPhase === 'partial'
     ? 'Retry MIDI Ports'
     : 'Connect MIDI';
 
-  const ctaClass = syncFlash
-    ? 'bg-emerald-600 hover:bg-emerald-700 text-white'
+  const ctaClass = isReady
+    ? 'border border-[var(--md-border-strong)] bg-[var(--md-control)] text-slate-800 dark:text-slate-100 hover:bg-[var(--md-hover)]'
     : connectionPhase === 'error' || connectionPhase === 'sysex_blocked'
     ? 'bg-red-600 hover:bg-red-700 text-white'
     : 'bg-blue-600 hover:bg-blue-700 text-white';
@@ -105,7 +103,7 @@ export const TopBar: React.FC<TopBarProps> = ({
           type="button"
           disabled={isBusy}
           onClick={onPrimaryAction}
-          className={`px-4 py-2 text-xs font-semibold rounded-md transition-colors whitespace-nowrap shrink-0 disabled:opacity-60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ${ctaClass}`}
+          className={`w-[152px] inline-flex items-center justify-center px-3 py-2 text-xs font-semibold rounded-md transition-colors whitespace-nowrap shrink-0 disabled:opacity-60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ${ctaClass}`}
         >
           {ctaLabel}
         </button>
