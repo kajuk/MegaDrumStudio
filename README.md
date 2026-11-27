@@ -8,7 +8,7 @@ Modern TypeScript + React + Web MIDI rewrite of MegaDrum Manager FX (`MDMFX`). R
 2. In the GitHub repository, open **Settings → Pages**.
 3. Under **Build and deployment → Source**, choose **GitHub Actions**.
 4. Push to `main` (or trigger the **Deploy MegaDrum Studio to GitHub Pages** workflow under **Actions**).
-5. Once deployed, open `https://<your-username>.github.io/<repo-name>/` in Chrome or Edge.
+5. Once deployed, open `https://kajuk.github.io/MegaDrumStudio/` in Chrome or Edge.
    - GitHub Pages serves over HTTPS, which enables **Web MIDI (with SysEx)** and **Install as Offline App (PWA)** out of the box.
 
 ## Run Locally
