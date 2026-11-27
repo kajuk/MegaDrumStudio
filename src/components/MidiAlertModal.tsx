@@ -7,6 +7,7 @@ interface MidiAlertModalProps {
   title: string;
   alertText: string;
   isPermissionAlert: boolean;
+  isNoPortsAlert?: boolean;
   permissionIssue: MidiPermissionIssue;
   permissionRequesting: boolean;
   permissionAttemptCount: number;
@@ -14,6 +15,7 @@ interface MidiAlertModalProps {
   isInIframe: boolean;
   isFirefox: boolean;
   onRequestPermission: () => void;
+  onScanPorts?: () => void;
   onDismiss: () => void;
 }
 
@@ -22,6 +24,7 @@ export const MidiAlertModal: React.FC<MidiAlertModalProps> = ({
   title,
   alertText,
   isPermissionAlert,
+  isNoPortsAlert = false,
   permissionIssue,
   permissionRequesting,
   permissionAttemptCount,
@@ -29,6 +32,7 @@ export const MidiAlertModal: React.FC<MidiAlertModalProps> = ({
   isInIframe,
   isFirefox,
   onRequestPermission,
+  onScanPorts,
   onDismiss,
 }) => {
   useEffect(() => {
@@ -164,6 +168,19 @@ export const MidiAlertModal: React.FC<MidiAlertModalProps> = ({
           >
             Dismiss
           </button>
+
+          {isNoPortsAlert && onScanPorts && (
+            <button
+              type="button"
+              onClick={() => {
+                onScanPorts();
+                onDismiss();
+              }}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded bg-blue-600 text-white hover:bg-blue-700 whitespace-nowrap shrink-0 transition-colors"
+            >
+              Scan MIDI Ports
+            </button>
+          )}
 
           {isPermissionAlert && midiSupported && (
             <button

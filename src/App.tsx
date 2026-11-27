@@ -1513,9 +1513,11 @@ export default function App() {
   );
 
   const isPermissionAlert =
-    midi.connectionPhase === 'error' ||
-    midi.connectionPhase === 'sysex_blocked' ||
-    midi.permissionIssue !== 'none';
+    (midi.connectionPhase === 'error' ||
+      midi.connectionPhase === 'sysex_blocked' ||
+      midi.permissionIssue !== 'none') &&
+    midi.connectionPhase !== 'no_ports';
+
   const hasAlert =
     midi.sysexStatus.code === 'timeout' ||
     midi.sysexStatus.code === 'midi_not_open' ||
@@ -1525,15 +1527,19 @@ export default function App() {
     midi.connectionPhase === 'no_ports';
 
   const alertText =
-    midi.sysexStatus.code === 'timeout' ||
-    midi.sysexStatus.code === 'midi_not_open' ||
-    midi.sysexStatus.code === 'error' ||
-    midi.sysexStatus.code === 'mismatch'
+    midi.connectionPhase === 'no_ports'
+      ? 'WebMIDI permission was successfully granted, but 0 MIDI input or output devices were detected. Please ensure your MegaDrum module is powered on and connected via a working USB cable, then click Scan MIDI ports.'
+      : midi.sysexStatus.code === 'timeout' ||
+        midi.sysexStatus.code === 'midi_not_open' ||
+        midi.sysexStatus.code === 'error' ||
+        midi.sysexStatus.code === 'mismatch'
       ? midi.sysexStatus.message
       : midi.connectionMessage;
 
   const alertTitle =
-    midi.permissionIssue === 'addon_required'
+    midi.connectionPhase === 'no_ports'
+      ? 'WebMIDI Granted — No MIDI Devices Detected'
+      : midi.permissionIssue === 'addon_required'
       ? 'WebMIDI Permission / Device Check'
       : midi.permissionIssue === 'prompt_required'
       ? 'WebMIDI Permission / Device Check'
@@ -1549,8 +1555,6 @@ export default function App() {
       ? 'MegaDrum SysEx Timeout'
       : midi.sysexStatus.code === 'midi_not_open'
       ? 'MIDI Ports Not Open'
-      : midi.connectionPhase === 'no_ports'
-      ? 'No MIDI Ports Found'
       : 'MIDI / SysEx Alert';
 
   const alertKey = hasAlert
@@ -1812,6 +1816,7 @@ export default function App() {
         title={alertTitle}
         alertText={alertText}
         isPermissionAlert={isPermissionAlert}
+        isNoPortsAlert={midi.connectionPhase === 'no_ports'}
         permissionIssue={midi.permissionIssue}
         permissionRequesting={midi.permissionRequesting}
         permissionAttemptCount={midi.permissionAttemptCount}
@@ -1819,6 +1824,7 @@ export default function App() {
         isInIframe={midi.isInIframe}
         isFirefox={midi.isFirefox}
         onRequestPermission={handleRequestMidiPermission}
+        onScanPorts={() => void midi.scanPorts({ userTriggered: true })}
         onDismiss={handleDismissAlertModal}
       />
 
