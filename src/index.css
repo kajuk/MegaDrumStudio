@@ -103,3 +103,7 @@
 input[type="range"] {
   accent-color: #2563eb;
 }
+
+.scrollbar-stable {
+  scrollbar-gutter: stable;
+}

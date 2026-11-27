@@ -356,109 +356,110 @@ export const KitPadsView: React.FC<KitPadsViewProps> = ({
       </aside>
 
       {/* Main Content Area */}
-      <main className="flex-1 overflow-y-auto p-5 lg:p-6 space-y-5">
+      <main className="flex-1 overflow-y-auto scrollbar-stable p-5 lg:p-6 space-y-5">
         {/* Header & Actions */}
         <div className="space-y-3">
-          <div className="flex flex-wrap items-start justify-between gap-3">
-            <div className="space-y-1">
-              <div className="flex flex-wrap items-center gap-3">
-                <h1 className="text-lg font-display font-semibold text-slate-900 dark:text-white">
-                  {isKick
-                    ? `Input 01 — ${leftPad.name}`
-                    : `Pair ${String(selectedPairIndex).padStart(2, '0')} (In ${leftPad.id} + In ${rightPad?.id ?? leftPad.id + 1}) — ${leftPad.name.replace(/\s+(Head|Bow)$/i, '')}`}
-                </h1>
-                <SectionSyncBanner
-                  state={pairSyncSummary.state}
-                  diffCount={pairSyncSummary.diffCount}
-                  unknownLabel={
-                    isKick
-                      ? 'Sync unknown · Click Get Input to read from MegaDrum'
-                      : 'Sync unknown · Click Get Pair to read from MegaDrum'
-                  }
-                  onRevert={
-                    snapLeftPad ? () => onRevertPairToModule(selectedPairIndex) : undefined
-                  }
-                />
+          <div className="space-y-1.5">
+            <div className="flex flex-wrap lg:flex-nowrap items-center justify-between gap-3">
+              <h1 className="text-lg font-display font-semibold text-slate-900 dark:text-white truncate min-w-0">
+                {isKick
+                  ? `Input 01 — ${leftPad.name}`
+                  : `Pair ${String(selectedPairIndex).padStart(2, '0')} (In ${leftPad.id} + In ${rightPad?.id ?? leftPad.id + 1}) — ${leftPad.name.replace(/\s+(Head|Bow)$/i, '')}`}
+              </h1>
+
+              <div className="flex flex-wrap items-center gap-2 shrink-0">
+                <button
+                  type="button"
+                  onClick={() => setShowKitMap((v) => !v)}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded border border-[var(--md-border-strong)] bg-[var(--md-control)] text-slate-700 dark:text-slate-200 hover:bg-[var(--md-hover)] transition-colors whitespace-nowrap"
+                >
+                  {showKitMap ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                  {showKitMap ? 'Hide Kit Map' : 'Show Kit Map'}
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => onRequestPairSysex(selectedPairIndex)}
+                  className="px-3 py-1.5 text-xs font-medium rounded border border-[var(--md-border-strong)] bg-[var(--md-control)] text-slate-700 dark:text-slate-200 hover:bg-[var(--md-hover)] transition-colors whitespace-nowrap"
+                >
+                  {isKick ? 'Get Input' : 'Get Pair'}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => onSendPairSysex(selectedPairIndex)}
+                  className={`px-3 py-1.5 text-xs font-semibold rounded text-white transition-colors whitespace-nowrap ${
+                    pairSyncSummary.state === 'modified'
+                      ? 'bg-amber-600 hover:bg-amber-700'
+                      : 'bg-blue-600 hover:bg-blue-700'
+                  }`}
+                >
+                  {pairSyncSummary.state === 'modified'
+                    ? `${isKick ? 'Send Input' : 'Send Pair'} (${pairSyncSummary.diffCount})`
+                    : isKick
+                    ? 'Send Input'
+                    : 'Send Pair'}
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => onTriggerPad(leftPad.id, 'head')}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded border border-[var(--md-border-strong)] bg-[var(--md-control)] text-slate-700 dark:text-slate-200 hover:bg-[var(--md-hover)] transition-colors whitespace-nowrap"
+                >
+                  <Zap className="w-3.5 h-3.5 text-amber-500" />
+                  {isKick ? 'Audition' : 'Head/Bow'}
+                </button>
+
+                {!isKick && rightPad && currentMode !== 'single' && (
+                  <button
+                    type="button"
+                    onClick={() => onTriggerPad(rightPad.id, 'rim')}
+                    className="px-3 py-1.5 text-xs font-medium rounded border border-[var(--md-border-strong)] bg-[var(--md-control)] text-slate-700 dark:text-slate-200 hover:bg-[var(--md-hover)] transition-colors whitespace-nowrap"
+                  >
+                    Rim/Edge
+                  </button>
+                )}
+
+                {!isKick && thirdZone && !thirdZone.disabled && (
+                  <button
+                    type="button"
+                    onClick={() => onTriggerPad(leftPad.id, 'bell')}
+                    className="px-3 py-1.5 text-xs font-medium rounded border border-[var(--md-border-strong)] bg-[var(--md-control)] text-slate-700 dark:text-slate-200 hover:bg-[var(--md-hover)] transition-colors whitespace-nowrap"
+                  >
+                    Bell (3rd)
+                  </button>
+                )}
+
+                <button
+                  type="button"
+                  onClick={() => onResetPair(selectedPairIndex)}
+                  title="Reset pair to factory defaults"
+                  className="p-1.5 rounded border border-[var(--md-border-strong)] bg-[var(--md-control)] text-slate-500 hover:text-slate-900 dark:text-slate-400 dark:hover:text-white transition-colors"
+                >
+                  <RotateCcw className="w-3.5 h-3.5" />
+                </button>
               </div>
-              <p className="text-xs text-slate-500 dark:text-slate-400">
+            </div>
+
+            <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1 min-h-5">
+              <p className="text-xs text-slate-500 dark:text-slate-400 truncate min-w-0">
                 {isKick
                   ? `Channel ${leftPad.midiChannel} · Note #${leftPad.note} (${formatMidiNote(leftPad.note).label})`
                   : `${currentTemplateMeta.label} · Ch ${leftPad.midiChannel} · Head/Bow #${leftPad.note} · Rim/Edge #${rightPad?.note ?? 0}${
                       thirdZone && !thirdZone.disabled ? ` · Bell #${thirdZone.note}` : ''
-                    } · Dashed blue = unknown, Amber = modified vs MegaDrum`}
+                    }`}
               </p>
-            </div>
-
-            <div className="flex flex-wrap items-center gap-2">
-              <button
-                type="button"
-                onClick={() => setShowKitMap((v) => !v)}
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded border border-slate-200 dark:border-slate-700 bg-white dark:bg-[#141923] text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors whitespace-nowrap"
-              >
-                {showKitMap ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
-                {showKitMap ? 'Hide Kit Map' : 'Show Kit Map'}
-              </button>
-
-              <button
-                type="button"
-                onClick={() => onRequestPairSysex(selectedPairIndex)}
-                className="px-3 py-1.5 text-xs font-medium rounded border border-slate-200 dark:border-slate-700 bg-white dark:bg-[#141923] text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors whitespace-nowrap"
-              >
-                {isKick ? 'Get Input' : 'Get Pair'}
-              </button>
-              <button
-                type="button"
-                onClick={() => onSendPairSysex(selectedPairIndex)}
-                className={`px-3 py-1.5 text-xs font-semibold rounded text-white transition-colors whitespace-nowrap ${
-                  pairSyncSummary.state === 'modified'
-                    ? 'bg-amber-600 hover:bg-amber-700'
-                    : 'bg-blue-600 hover:bg-blue-700'
-                }`}
-              >
-                {pairSyncSummary.state === 'modified'
-                  ? `${isKick ? 'Send Input' : 'Send Pair'} (${pairSyncSummary.diffCount})`
-                  : isKick
-                  ? 'Send Input'
-                  : 'Send Pair'}
-              </button>
-
-              <button
-                type="button"
-                onClick={() => onTriggerPad(leftPad.id, 'head')}
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded border border-slate-200 dark:border-slate-700 bg-white dark:bg-[#141923] text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors whitespace-nowrap"
-              >
-                <Zap className="w-3.5 h-3.5 text-amber-500" />
-                {isKick ? 'Audition' : 'Head/Bow'}
-              </button>
-
-              {!isKick && rightPad && currentMode !== 'single' && (
-                <button
-                  type="button"
-                  onClick={() => onTriggerPad(rightPad.id, 'rim')}
-                  className="px-3 py-1.5 text-xs font-medium rounded border border-slate-200 dark:border-slate-700 bg-white dark:bg-[#141923] text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors whitespace-nowrap"
-                >
-                  Rim/Edge
-                </button>
-              )}
-
-              {!isKick && thirdZone && !thirdZone.disabled && (
-                <button
-                  type="button"
-                  onClick={() => onTriggerPad(leftPad.id, 'bell')}
-                  className="px-3 py-1.5 text-xs font-medium rounded border border-slate-200 dark:border-slate-700 bg-white dark:bg-[#141923] text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors whitespace-nowrap"
-                >
-                  Bell (3rd)
-                </button>
-              )}
-
-              <button
-                type="button"
-                onClick={() => onResetPair(selectedPairIndex)}
-                title="Reset pair to factory defaults"
-                className="p-1.5 rounded border border-slate-200 dark:border-slate-700 bg-white dark:bg-[#141923] text-slate-500 hover:text-slate-900 dark:text-slate-400 dark:hover:text-white transition-colors"
-              >
-                <RotateCcw className="w-3.5 h-3.5" />
-              </button>
+              <SectionSyncBanner
+                state={pairSyncSummary.state}
+                diffCount={pairSyncSummary.diffCount}
+                unknownLabel={
+                  isKick
+                    ? 'Sync unknown · Click Get Input to read from MegaDrum'
+                    : 'Sync unknown · Click Get Pair to read from MegaDrum'
+                }
+                onRevert={
+                  snapLeftPad ? () => onRevertPairToModule(selectedPairIndex) : undefined
+                }
+              />
             </div>
           </div>
 
