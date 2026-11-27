@@ -17,7 +17,7 @@ import {
   MidiEventLog,
   MidiLogEventType,
 } from '../types/megadrum';
-import { MD_SYSEX, MD_SYSEX_NAMES } from '../utils/sysex';
+import { decodeMidiLogDetails, normalizeHexBytes } from '../utils/midiLogFormat';
 
 interface MidiLogViewProps {
   logs: MidiEventLog[];
@@ -174,57 +174,6 @@ function getVelocityTier(vel: number): {
     barClass: 'bg-sky-500',
     textClass: 'text-sky-600 dark:text-sky-400',
   };
-}
-
-function formatHexWrapped(rawHex: string): string[] {
-  const tokens = rawHex.trim().split(/\s+/).filter(Boolean);
-  if (tokens.length === 0) return [];
-  const lines: string[] = [];
-  for (let i = 0; i < tokens.length; i += 16) {
-    const offset = i.toString(16).padStart(4, '0').toUpperCase();
-    lines.push(`${offset}:  ${tokens.slice(i, i + 16).join(' ')}`);
-  }
-  return lines;
-}
-
-function decodeHexDetails(log: MidiEventLog): string[] {
-  const details: string[] = [];
-  if (log.type === 'sysex') {
-    const bytes = log.rawHex
-      .trim()
-      .split(/\s+/)
-      .map((h) => parseInt(h, 16))
-      .filter((n) => !Number.isNaN(n));
-    if (bytes.length >= 4 && bytes[0] === 0xf0 && bytes[1] === MD_SYSEX) {
-      const chainId = bytes[2];
-      const cmd = bytes[3];
-      const cmdName = MD_SYSEX_NAMES[cmd] || `0x${cmd.toString(16).toUpperCase()}`;
-      details.push(`Protocol: MegaDrum SysEx (0x70)`);
-      details.push(`Chain ID: ${chainId}`);
-      details.push(`Command: ${cmdName} (0x${cmd.toString(16).padStart(2, '0').toUpperCase()})`);
-      if (bytes.length >= 5 && bytes[4] !== 0xf7) {
-        details.push(`Target ID byte: ${bytes[4]} (0x${bytes[4].toString(16).padStart(2, '0').toUpperCase()})`);
-      }
-      details.push(`Total length: ${bytes.length} bytes`);
-    } else if (bytes.length > 0) {
-      details.push(`SysEx / Bootloader frame (${bytes.length} bytes)`);
-    }
-  } else {
-    if (log.channel !== undefined) details.push(`Channel: ${log.channel}`);
-    if (log.note !== undefined) {
-      const info = formatMidiNote(log.note);
-      details.push(`Note: #${log.note} (${info.pitch} · ${info.label})`);
-    }
-    if (log.velocity !== undefined) {
-      details.push(
-        log.type === 'aftertouch' ? `Pressure: ${log.velocity}` : `Velocity: ${log.velocity} / 127`
-      );
-    }
-    if (log.cc !== undefined) details.push(`Controller: CC #${log.cc}`);
-    if (log.ccValue !== undefined) details.push(`Value: ${log.ccValue} / 127`);
-    if (log.program !== undefined) details.push(`Program: #${log.program}`);
-  }
-  return details;
 }
 
 function getTypeLabel(type: MidiLogEventType): string {
@@ -440,7 +389,7 @@ export const MidiLogView: React.FC<MidiLogViewProps> = ({
   }, [config, directionFilteredLogs, rawSearch, rawTypeFilter]);
 
   const handleCopyHex = (id: string, hex: string) => {
-    void navigator.clipboard?.writeText(hex);
+    void navigator.clipboard?.writeText(normalizeHexBytes(hex));
     setCopiedId(id);
     window.setTimeout(() => {
       setCopiedId((cur) => (cur === id ? null : cur));
@@ -1037,19 +986,29 @@ export const MidiLogView: React.FC<MidiLogViewProps> = ({
                     No matching raw MIDI or SysEx packets. Connect MegaDrum, trigger a pad, or run a SysEx sync.
                   </div>
                 ) : (
-                  <table className="w-full text-left text-xs border-collapse">
+                  <table className="w-full text-left text-xs border-collapse table-fixed">
                     <thead className="bg-[var(--md-control-alt)] text-slate-500 dark:text-slate-400 border-b border-[var(--md-border)] sticky top-0 z-10">
                       <tr>
-                        <th className="px-3 py-2 font-medium whitespace-nowrap">Time</th>
+                        <th className="w-[96px] px-3 py-2 font-medium whitespace-nowrap">Time</th>
                         {showDeltaCol && (
-                          <th className="px-2 py-2 font-medium whitespace-nowrap text-right">+Δms</th>
+                          <th className="w-[52px] px-2 py-2 font-medium whitespace-nowrap text-right">+Δms</th>
                         )}
-                        <th className="px-2 py-2 font-medium whitespace-nowrap">Dir</th>
-                        <th className="px-2 py-2 font-medium whitespace-nowrap">Ch</th>
-                        <th className="px-2 py-2 font-medium whitespace-nowrap">Type</th>
-                        <th className="px-3 py-2 font-medium">Decoded Message</th>
+                        <th className="w-[42px] px-2 py-2 font-medium whitespace-nowrap">Dir</th>
+                        <th className="w-[38px] px-2 py-2 font-medium whitespace-nowrap">Ch</th>
+                        <th className="w-[74px] px-2 py-2 font-medium whitespace-nowrap">Type</th>
+                        <th
+                          className={`px-3 py-2 font-medium whitespace-nowrap ${
+                            showRawHexCol
+                              ? viewMode === 'raw'
+                                ? 'w-[240px]'
+                                : 'w-[180px]'
+                              : 'w-auto'
+                          }`}
+                        >
+                          Decoded Message
+                        </th>
                         {showRawHexCol && (
-                          <th className="px-3 py-2 font-medium">Raw Hex</th>
+                          <th className="px-3 py-2 font-medium whitespace-nowrap">Raw Hex</th>
                         )}
                       </tr>
                     </thead>
@@ -1058,6 +1017,11 @@ export const MidiLogView: React.FC<MidiLogViewProps> = ({
                         const isExpanded = expandedRowId === entry.id;
                         const colSpan =
                           4 + (showDeltaCol ? 1 : 0) + 1 + (showRawHexCol ? 1 : 0);
+                        const cleanHex = normalizeHexBytes(entry.rawHex);
+                        const fullSummary =
+                          resolved && entry.type !== 'sysex'
+                            ? `${entry.summary} · ${resolved.padLabel} (${resolved.zoneLabel})`
+                            : entry.summary;
 
                         return (
                           <React.Fragment key={entry.id}>
@@ -1111,7 +1075,8 @@ export const MidiLogView: React.FC<MidiLogViewProps> = ({
                                 {getTypeLabel(entry.type)}
                               </td>
                               <td
-                                className={`px-3 py-1.5 font-sans text-xs ${
+                                title={fullSummary}
+                                className={`px-3 py-1.5 font-sans text-xs truncate ${
                                   entry.type === 'error'
                                     ? 'text-red-700 dark:text-red-300 font-medium'
                                     : 'text-slate-900 dark:text-slate-100'
@@ -1125,8 +1090,8 @@ export const MidiLogView: React.FC<MidiLogViewProps> = ({
                                 )}
                               </td>
                               {showRawHexCol && (
-                                <td className="px-3 py-1.5 text-slate-500 dark:text-slate-400 max-w-[210px] truncate">
-                                  {entry.rawHex}
+                                <td className="px-3 py-1.5 text-slate-500 dark:text-slate-400 truncate">
+                                  {cleanHex || '--'}
                                 </td>
                               )}
                             </tr>
@@ -1136,7 +1101,10 @@ export const MidiLogView: React.FC<MidiLogViewProps> = ({
                                 <td colSpan={colSpan} className="px-4 py-3 space-y-2.5">
                                   <div className="flex flex-wrap items-center justify-between gap-2">
                                     <div className="flex flex-wrap items-center gap-x-4 gap-y-1 font-sans text-xs text-slate-600 dark:text-slate-300">
-                                      {decodeHexDetails(entry).map((line, i) => (
+                                      <span className="font-medium text-slate-900 dark:text-slate-100">
+                                        {fullSummary}
+                                      </span>
+                                      {decodeMidiLogDetails(entry).map((line, i) => (
                                         <span key={i}>{line}</span>
                                       ))}
                                     </div>
@@ -1146,7 +1114,7 @@ export const MidiLogView: React.FC<MidiLogViewProps> = ({
                                         e.stopPropagation();
                                         handleCopyHex(entry.id, entry.rawHex);
                                       }}
-                                      className="inline-flex items-center gap-1 px-2 py-1 text-[11px] font-sans font-medium rounded border border-[var(--md-border-strong)] bg-[var(--md-control)] text-slate-700 dark:text-slate-200 hover:bg-[var(--md-hover)]"
+                                      className="inline-flex items-center gap-1 px-2 py-1 text-[11px] font-sans font-medium rounded border border-[var(--md-border-strong)] bg-[var(--md-control)] text-slate-700 dark:text-slate-200 hover:bg-[var(--md-hover)] whitespace-nowrap shrink-0"
                                     >
                                       {copiedId === entry.id ? (
                                         <>
@@ -1161,8 +1129,8 @@ export const MidiLogView: React.FC<MidiLogViewProps> = ({
                                       )}
                                     </button>
                                   </div>
-                                  <pre className="p-2.5 rounded border border-[var(--md-border)] bg-[var(--md-panel)] text-[11px] font-mono text-slate-700 dark:text-slate-300 overflow-x-auto leading-relaxed">
-                                    {formatHexWrapped(entry.rawHex).join('\n') || '--'}
+                                  <pre className="p-2.5 rounded border border-[var(--md-border)] bg-[var(--md-panel)] text-[11px] font-mono text-slate-700 dark:text-slate-300 whitespace-pre-wrap break-words leading-relaxed select-all">
+                                    {cleanHex || '--'}
                                   </pre>
                                 </td>
                               </tr>

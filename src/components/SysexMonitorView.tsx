@@ -1,6 +1,17 @@
 import React, { useMemo, useState } from 'react';
-import { ArrowDownToLine, ArrowUpFromLine, Cpu, Download, HardDrive, RefreshCw, Trash2 } from 'lucide-react';
+import {
+  ArrowDownToLine,
+  ArrowUpFromLine,
+  Check,
+  Copy,
+  Cpu,
+  Download,
+  HardDrive,
+  RefreshCw,
+  Trash2,
+} from 'lucide-react';
 import { MD_MCU_TYPES, MegaDrumConfig, MidiEventLog } from '../types/megadrum';
+import { decodeMidiLogDetails, normalizeHexBytes } from '../utils/midiLogFormat';
 import { buildFullConfigSyxFile, formatBytesHex } from '../utils/sysex';
 import { FirmwareUpgradePanel } from './FirmwareUpgradePanel';
 
@@ -52,6 +63,16 @@ export const SysexMonitorView: React.FC<SysexMonitorViewProps> = ({
   const [subTab, setSubTab] = useState<'sysex' | 'firmware'>('sysex');
   const [filterType, setFilterType] = useState<'all' | 'sysex' | 'note' | 'cc' | 'error'>('all');
   const [selectedSlot, setSelectedSlot] = useState<number>(config.global.activeSlot);
+  const [expandedLogId, setExpandedLogId] = useState<string | null>(null);
+  const [copiedLogId, setCopiedLogId] = useState<string | null>(null);
+
+  const handleCopyHex = (id: string, rawHex: string) => {
+    void navigator.clipboard?.writeText(normalizeHexBytes(rawHex));
+    setCopiedLogId(id);
+    window.setTimeout(() => {
+      setCopiedLogId((cur) => (cur === id ? null : cur));
+    }, 1400);
+  };
   const displayVersion = midiConnected && detectedVersion ? detectedVersion : 'Unknown';
   const displayMcuId =
     midiConnected && detectedMcuTypeId !== null ? detectedMcuTypeId : 0;
@@ -322,7 +343,10 @@ export const SysexMonitorView: React.FC<SysexMonitorViewProps> = ({
                   )}
                   <button
                     type="button"
-                    onClick={onClearLogs}
+                    onClick={() => {
+                      setExpandedLogId(null);
+                      onClearLogs();
+                    }}
                     className="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white"
                   >
                     <Trash2 className="w-3.5 h-3.5" />
@@ -337,65 +361,122 @@ export const SysexMonitorView: React.FC<SysexMonitorViewProps> = ({
                     No MIDI or SysEx events recorded yet. Connect a MegaDrum module, click Test Hit, or run a Get/Send SysEx command to inspect packets and errors.
                   </div>
                 ) : (
-                  <table className="w-full text-left text-xs">
-                    <thead className="bg-[var(--md-control-alt)] text-slate-500 dark:text-slate-400 border-b border-[var(--md-border)] sticky top-0">
+                  <table className="w-full text-left text-xs border-collapse table-fixed">
+                    <thead className="bg-[var(--md-control-alt)] text-slate-500 dark:text-slate-400 border-b border-[var(--md-border)] sticky top-0 z-10">
                       <tr>
-                        <th className="px-4 py-2 font-medium">Time</th>
-                        <th className="px-4 py-2 font-medium">Dir</th>
-                        <th className="px-4 py-2 font-medium">Type</th>
-                        <th className="px-4 py-2 font-medium">Event</th>
-                        <th className="px-4 py-2 font-medium">Hex Bytes</th>
+                        <th className="w-[104px] px-3 py-2 font-medium whitespace-nowrap">Time</th>
+                        <th className="w-[50px] px-2.5 py-2 font-medium whitespace-nowrap">Dir</th>
+                        <th className="w-[74px] px-2.5 py-2 font-medium whitespace-nowrap">Type</th>
+                        <th className="w-[215px] px-3 py-2 font-medium whitespace-nowrap">Event</th>
+                        <th className="px-3 py-2 font-medium whitespace-nowrap">Hex Bytes</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100 dark:divide-slate-800/60 font-mono text-[11px]">
-                      {filteredLogs.map((log) => (
-                        <tr
-                          key={log.id}
-                          className={
-                            log.type === 'error'
-                              ? 'bg-red-50/70 dark:bg-red-950/30'
-                              : 'hover:bg-slate-50/70 dark:hover:bg-[#151B27]'
-                          }
-                        >
-                          <td className="px-4 py-2 text-slate-500 tabular-nums whitespace-nowrap">
-                            {log.timestamp}
-                          </td>
-                          <td className="px-4 py-2 whitespace-nowrap">
-                            <span
-                              className={
-                                log.type === 'error'
-                                  ? 'text-red-600 dark:text-red-400 font-semibold'
-                                  : log.direction === 'out'
-                                  ? 'text-blue-600 dark:text-blue-400 font-semibold'
-                                  : 'text-emerald-600 dark:text-emerald-400 font-semibold'
+                      {filteredLogs.map((log) => {
+                        const isExpanded = expandedLogId === log.id;
+                        const cleanHex = normalizeHexBytes(log.rawHex);
+                        const details = isExpanded ? decodeMidiLogDetails(log) : [];
+
+                        return (
+                          <React.Fragment key={log.id}>
+                            <tr
+                              onClick={() =>
+                                setExpandedLogId((cur) => (cur === log.id ? null : log.id))
                               }
+                              className={`cursor-pointer transition-colors ${
+                                log.type === 'error'
+                                  ? 'bg-red-50/70 dark:bg-red-950/30 hover:bg-red-100/60 dark:hover:bg-red-950/50'
+                                  : isExpanded
+                                  ? 'bg-blue-50/50 dark:bg-blue-950/25'
+                                  : 'hover:bg-slate-50/70 dark:hover:bg-[#151B27]'
+                              }`}
                             >
-                              {log.direction.toUpperCase()}
-                            </span>
-                          </td>
-                          <td
-                            className={`px-4 py-2 uppercase whitespace-nowrap ${
-                              log.type === 'error'
-                                ? 'text-red-600 dark:text-red-400 font-semibold'
-                                : 'text-slate-600 dark:text-slate-300'
-                            }`}
-                          >
-                            {log.type}
-                          </td>
-                          <td
-                            className={`px-4 py-2 font-sans text-xs ${
-                              log.type === 'error'
-                                ? 'text-red-700 dark:text-red-300 font-medium'
-                                : 'text-slate-900 dark:text-slate-100'
-                            }`}
-                          >
-                            {log.summary}
-                          </td>
-                          <td className="px-4 py-2 text-slate-500 dark:text-slate-400 truncate max-w-xs">
-                            {log.rawHex}
-                          </td>
-                        </tr>
-                      ))}
+                              <td className="px-3 py-2 text-slate-500 tabular-nums whitespace-nowrap">
+                                {log.timestamp}
+                              </td>
+                              <td className="px-2.5 py-2 whitespace-nowrap">
+                                <span
+                                  className={
+                                    log.type === 'error'
+                                      ? 'text-red-600 dark:text-red-400 font-semibold'
+                                      : log.direction === 'out'
+                                      ? 'text-blue-600 dark:text-blue-400 font-semibold'
+                                      : 'text-emerald-600 dark:text-emerald-400 font-semibold'
+                                  }
+                                >
+                                  {log.direction.toUpperCase()}
+                                </span>
+                              </td>
+                              <td
+                                className={`px-2.5 py-2 uppercase whitespace-nowrap ${
+                                  log.type === 'error'
+                                    ? 'text-red-600 dark:text-red-400 font-semibold'
+                                    : log.type === 'sysex'
+                                    ? 'text-violet-600 dark:text-violet-400'
+                                    : log.type === 'cc'
+                                    ? 'text-indigo-600 dark:text-indigo-400'
+                                    : 'text-slate-600 dark:text-slate-300'
+                                }`}
+                              >
+                                {log.type}
+                              </td>
+                              <td
+                                title={log.summary}
+                                className={`px-3 py-2 font-sans text-xs truncate ${
+                                  log.type === 'error'
+                                    ? 'text-red-700 dark:text-red-300 font-medium'
+                                    : 'text-slate-900 dark:text-slate-100'
+                                }`}
+                              >
+                                {log.summary}
+                              </td>
+                              <td className="px-3 py-2 text-slate-500 dark:text-slate-400 truncate">
+                                {cleanHex || '--'}
+                              </td>
+                            </tr>
+
+                            {isExpanded && (
+                              <tr className="bg-[var(--md-inset)]">
+                                <td colSpan={5} className="px-4 py-3 space-y-2.5">
+                                  <div className="flex flex-wrap items-center justify-between gap-2">
+                                    <div className="flex flex-wrap items-center gap-x-4 gap-y-1 font-sans text-xs text-slate-600 dark:text-slate-300">
+                                      <span className="font-medium text-slate-900 dark:text-slate-100">
+                                        {log.summary}
+                                      </span>
+                                      {details.map((line, i) => (
+                                        <span key={i}>{line}</span>
+                                      ))}
+                                    </div>
+                                    <button
+                                      type="button"
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        handleCopyHex(log.id, log.rawHex);
+                                      }}
+                                      className="inline-flex items-center gap-1 px-2 py-1 text-[11px] font-sans font-medium rounded border border-[var(--md-border-strong)] bg-[var(--md-control)] text-slate-700 dark:text-slate-200 hover:bg-[var(--md-hover)] whitespace-nowrap shrink-0"
+                                    >
+                                      {copiedLogId === log.id ? (
+                                        <>
+                                          <Check className="w-3 h-3 text-emerald-500" />
+                                          Copied
+                                        </>
+                                      ) : (
+                                        <>
+                                          <Copy className="w-3 h-3" />
+                                          Copy Hex
+                                        </>
+                                      )}
+                                    </button>
+                                  </div>
+                                  <pre className="p-2.5 rounded border border-[var(--md-border)] bg-[var(--md-panel)] text-[11px] font-mono text-slate-700 dark:text-slate-300 whitespace-pre-wrap break-words leading-relaxed select-all">
+                                    {cleanHex || '--'}
+                                  </pre>
+                                </td>
+                              </tr>
+                            )}
+                          </React.Fragment>
+                        );
+                      })}
                     </tbody>
                   </table>
                 )}
