@@ -1128,6 +1128,13 @@ export default function App() {
       });
     }
 
+    tasks.push({
+      kind: 'request',
+      packet: buildRequestConfigCountSysex(ch),
+      expectedCmd: MD_SYSEX_CMD.CONFIG_COUNT,
+      label: 'EEPROM Config Count',
+    });
+
     await executeQueue(
       tasks,
       (r) => `Send All complete: verified ${r.completed} blocks on MegaDrum`
@@ -1405,17 +1412,24 @@ export default function App() {
 
   const handleSendGlobal = useCallback(async () => {
     const cfg = configRef.current;
+    const ch = cfg.chainId;
     await executeQueue(
       [
         {
           kind: 'send',
           packet: encodeGlobalMiscSysex(cfg),
-          verifyRequest: buildRequestGlobalMiscSysex(cfg.chainId),
+          verifyRequest: buildRequestGlobalMiscSysex(ch),
           expectedCmd: MD_SYSEX_CMD.GLOBAL_MISC,
           label: 'Send Global Misc',
         },
+        {
+          kind: 'request',
+          packet: buildRequestConfigCountSysex(ch),
+          expectedCmd: MD_SYSEX_CMD.CONFIG_COUNT,
+          label: 'EEPROM Config Count',
+        },
       ],
-      () => 'Sent & verified Global Misc settings on MegaDrum'
+      () => 'Sent & verified Global Misc settings & synced EEPROM Config Count on MegaDrum'
     );
   }, [executeQueue]);
 
