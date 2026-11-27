@@ -22,6 +22,7 @@ export function createEmptySyncSnapshot(): ModuleSyncSnapshot {
     thirdZones: Array.from({ length: 27 }, () => null),
     positionals: Array.from({ length: 55 }, () => null),
     curves: Array.from({ length: 16 }, () => null),
+    customNames: Array.from({ length: 32 }, () => null),
   };
 }
 
@@ -77,6 +78,15 @@ export function updateSnapshotFromDecodedSysex(
           ...u.curves[pointer],
           points: [...u.curves[pointer].points],
         };
+      }
+      break;
+    }
+    case MD_SYSEX_CMD.CUSTOM_NAME: {
+      if (!next.customNames) {
+        next.customNames = Array.from({ length: 32 }, () => null);
+      }
+      if (pointer >= 0 && pointer < next.customNames.length && u.customNames && u.customNames[pointer] !== undefined) {
+        next.customNames[pointer] = u.customNames[pointer];
       }
       break;
     }

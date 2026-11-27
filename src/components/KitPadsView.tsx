@@ -1,13 +1,17 @@
 import React, { useMemo, useState } from 'react';
-import { Copy, Eye, EyeOff, RotateCcw, Search, Zap } from 'lucide-react';
+import { Copy, Eye, EyeOff, RotateCcw, Search, Tag, Zap } from 'lucide-react';
 import {
   ActiveHit,
   CurveConfig,
   FieldSyncInfo,
   formatMidiNote,
+  getMaxCustomPadNames,
+  getPadDisplayName,
   getPairZoneMode,
   InputCategory,
   MD_CURVES_LIST,
+  MD_CUSTOM_PADS_NAMES_LIST,
+  MD_PADS_NAMES_LIST,
   ModuleSyncSnapshot,
   PAD_DYN_TIME_VALUES,
   PAD_FUNCTION_LABELS,
@@ -40,6 +44,9 @@ interface KitPadsViewProps {
   curves: CurveConfig[];
   syncSnapshot: ModuleSyncSnapshot;
   maxInputs: number;
+  mcuTypeId: number;
+  customNames: string[];
+  customPadNamesEnabled: boolean;
   selectedPairIndex: number; // 0 = Kick (In 1), 1..27 = Stereo Pair (In 2+3 .. In 54+55)
   activeHit: ActiveHit | null;
   audioEnabled: boolean;
@@ -53,6 +60,7 @@ interface KitPadsViewProps {
   onTriggerPad: (padId: number, zone?: 'head' | 'rim' | 'bell') => void;
   onSendPairSysex: (pairIndex: number) => void;
   onRequestPairSysex: (pairIndex: number) => void;
+  onOpenCustomNamesManager?: () => void;
 }
 
 const ZONE_TEMPLATES: {
@@ -94,6 +102,9 @@ export const KitPadsView: React.FC<KitPadsViewProps> = ({
   curves,
   syncSnapshot,
   maxInputs,
+  mcuTypeId,
+  customNames,
+  customPadNamesEnabled,
   selectedPairIndex,
   activeHit,
   audioEnabled,
@@ -107,6 +118,7 @@ export const KitPadsView: React.FC<KitPadsViewProps> = ({
   onTriggerPad,
   onSendPairSysex,
   onRequestPairSysex,
+  onOpenCustomNamesManager,
 }) => {
   const [search, setSearch] = useState('');
   const [categoryFilter, setCategoryFilter] = useState<InputCategory>('all');
@@ -468,8 +480,8 @@ export const KitPadsView: React.FC<KitPadsViewProps> = ({
             <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1 min-h-5">
               <p className="text-xs text-slate-500 dark:text-slate-400 truncate min-w-0">
                 {isKick
-                  ? `Channel ${leftPad.midiChannel} · Note #${leftPad.note} (${formatMidiNote(leftPad.note).label})`
-                  : `${currentTemplateMeta.label} · Ch ${leftPad.midiChannel} · Head/Bow #${leftPad.note} · Rim/Edge #${rightPad?.note ?? 0}${
+                  ? `LCD: ${getPadDisplayName(leftPad, customNames)} · Channel ${leftPad.midiChannel} · Note #${leftPad.note} (${formatMidiNote(leftPad.note).label})`
+                  : `${currentTemplateMeta.label} · LCD: ${getPadDisplayName(leftPad, customNames)} · Ch ${leftPad.midiChannel} · Head/Bow #${leftPad.note} · Rim/Edge #${rightPad?.note ?? 0}${
                       thirdZone && !thirdZone.disabled ? ` · Bell #${thirdZone.note}` : ''
                     }`}
               </p>
@@ -568,6 +580,9 @@ export const KitPadsView: React.FC<KitPadsViewProps> = ({
             snapPos={snapLeftPos}
             curves={curves}
             activeCurvePoints={leftCurvePoints}
+            mcuTypeId={mcuTypeId}
+            customNames={customNames}
+            customPadNamesEnabled={customPadNamesEnabled}
             audioEnabled={audioEnabled}
             lastVelocity={
               activeHit && activeHit.padId === leftPad.id ? activeHit.velocity : undefined
@@ -576,6 +591,7 @@ export const KitPadsView: React.FC<KitPadsViewProps> = ({
             onUpdatePos={
               leftPos ? (patch) => onUpdatePositional(leftPad.id, patch) : undefined
             }
+            onOpenCustomNamesManager={onOpenCustomNamesManager}
           />
 
           {!isKick && rightPad && (
@@ -592,6 +608,9 @@ export const KitPadsView: React.FC<KitPadsViewProps> = ({
                 MD_CURVES_LIST[rightPad.curve]?.defaultPoints ||
                 MD_CURVES_LIST[0].defaultPoints
               }
+              mcuTypeId={mcuTypeId}
+              customNames={customNames}
+              customPadNamesEnabled={customPadNamesEnabled}
               audioEnabled={audioEnabled}
               lastVelocity={
                 activeHit && activeHit.padId === rightPad.id ? activeHit.velocity : undefined
@@ -600,6 +619,7 @@ export const KitPadsView: React.FC<KitPadsViewProps> = ({
               onUpdatePos={
                 rightPos ? (patch) => onUpdatePositional(rightPad.id, patch) : undefined
               }
+              onOpenCustomNamesManager={onOpenCustomNamesManager}
             />
           )}
         </div>
@@ -732,10 +752,14 @@ interface InputColumnSectionProps {
   snapPos?: PositionalConfig | null;
   curves: CurveConfig[];
   activeCurvePoints: number[];
+  mcuTypeId: number;
+  customNames: string[];
+  customPadNamesEnabled: boolean;
   audioEnabled: boolean;
   lastVelocity?: number;
   onUpdatePad: (patch: Partial<PadConfig>) => void;
   onUpdatePos?: (patch: Partial<PositionalConfig>) => void;
+  onOpenCustomNamesManager?: () => void;
 }
 
 const InputColumnSection: React.FC<InputColumnSectionProps> = ({
@@ -747,13 +771,19 @@ const InputColumnSection: React.FC<InputColumnSectionProps> = ({
   snapPos,
   curves,
   activeCurvePoints,
+  mcuTypeId,
+  customNames,
+  customPadNamesEnabled,
   audioEnabled,
   lastVelocity,
   onUpdatePad,
   onUpdatePos,
+  onOpenCustomNamesManager,
 }) => {
   const padSummary = getPadSyncSummary(pad, snapPad, pos, snapPos);
+  const maxCustomNames = getMaxCustomPadNames(mcuTypeId);
 
+  const fCustomName = getFieldSync(pad, snapPad, 'customNameIndex');
   const fNote = getFieldSync(pad, snapPad, 'note');
   const fAltNote = getFieldSync(pad, snapPad, 'altNote');
   const fPressNote = getFieldSync(pad, snapPad, 'pressrollNote');
@@ -775,6 +805,19 @@ const InputColumnSection: React.FC<InputColumnSectionProps> = ({
   const fXtalkLevel = getFieldSync(pad, snapPad, 'xtalkLevel');
   const fRollSmooth = getFieldSync(pad, snapPad, 'rollSmoothLevel');
   const fExtraSupp = getFieldSync(pad, snapPad, 'extraFalseSupp');
+
+  const formatHardwareNameIdx = (val: number | string | boolean) => {
+    const idxVal = Number(val);
+    if (idxVal === 0) return `Default (${MD_PADS_NAMES_LIST[pad.id - 1] || `In ${pad.id}`})`;
+    if (idxVal >= 1 && idxVal <= 72) return MD_CUSTOM_PADS_NAMES_LIST[idxVal - 1] || `#${idxVal}`;
+    const cIdx = idxVal - 73;
+    return customNames[cIdx]?.trim() || `Custom${cIdx + 1}`;
+  };
+
+  const customSlotCount = Math.min(
+    32,
+    Math.max(maxCustomNames, pad.customNameIndex >= 73 ? pad.customNameIndex - 72 : 0)
+  );
 
   const inputTypeSyncState = (() => {
     if (!snapPad) return 'unknown' as const;
@@ -824,21 +867,92 @@ const InputColumnSection: React.FC<InputColumnSectionProps> = ({
         </div>
       </div>
 
-      {/* Name, Wiring Mode, Channel, Function */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-        <div className="col-span-2 sm:col-span-1">
+      {/* Hardware Name (SysEx 0x03 + EEPROM 0x08) & Local Studio Label */}
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+        <div className="sm:col-span-2 space-y-1">
+          <div className="flex items-center justify-between gap-2">
+            <ParamLabelRow
+              label="Hardware Name (LCD)"
+              sync={fCustomName}
+              formatModuleValue={(v) => formatHardwareNameIdx(v)}
+              onRevert={
+                snapPad ? () => onUpdatePad({ customNameIndex: snapPad.customNameIndex }) : undefined
+              }
+            />
+            {onOpenCustomNamesManager && (
+              <button
+                type="button"
+                onClick={onOpenCustomNamesManager}
+                className="inline-flex items-center gap-1 text-[11px] font-medium text-blue-600 dark:text-blue-400 hover:underline whitespace-nowrap shrink-0"
+                title="Manage custom 8-char EEPROM pad names (SysEx 0x08)"
+              >
+                <Tag className="w-3 h-3" />
+                Edit EEPROM Names (0x08)
+              </button>
+            )}
+          </div>
+          <select
+            value={pad.customNameIndex}
+            onChange={(e) => onUpdatePad({ customNameIndex: Number(e.target.value) })}
+            className={`w-full px-2 py-1.5 text-xs bg-white dark:bg-[#0E121A] border rounded ${syncInputClass(
+              fCustomName.state
+            )}`}
+          >
+            <option value={0}>
+              0: Default ({MD_PADS_NAMES_LIST[pad.id - 1] || `Input ${pad.id}`})
+            </option>
+            <optgroup label="Built-in Pad Names (1–72)">
+              {MD_CUSTOM_PADS_NAMES_LIST.map((name, idx) => (
+                <option key={idx + 1} value={idx + 1}>
+                  {idx + 1}: {name}
+                </option>
+              ))}
+            </optgroup>
+            <optgroup
+              label={
+                customPadNamesEnabled
+                  ? `Custom EEPROM Names (SysEx 0x08 · 1–${maxCustomNames})`
+                  : `Custom EEPROM Names (Disabled in Global 0x09)`
+              }
+            >
+              {Array.from({ length: customSlotCount }, (_, idx) => {
+                const slotVal = 73 + idx;
+                const slotLabel = customNames[idx]?.trim() || `Custom${idx + 1}`;
+                const overLimit = idx >= maxCustomNames;
+                return (
+                  <option key={slotVal} value={slotVal}>
+                    {slotVal}: {slotLabel}
+                    {overLimit ? ' (over MCU limit)' : ''}
+                    {!customPadNamesEnabled ? ' [Off]' : ''}
+                  </option>
+                );
+              })}
+            </optgroup>
+          </select>
+          {pad.customNameIndex >= 73 && !customPadNamesEnabled && (
+            <p className="text-[11px] text-amber-700 dark:text-amber-400">
+              Enable Custom Pad Names in Global (0x09) or EEPROM editor for hardware display.
+            </p>
+          )}
+        </div>
+
+        <div>
           <label className="block text-xs font-medium text-slate-600 dark:text-slate-400 mb-1">
-            Label
+            Local Label
           </label>
           <input
             type="text"
             maxLength={18}
             value={pad.name}
             onChange={(e) => onUpdatePad({ name: e.target.value })}
+            placeholder="Studio label"
             className="w-full px-2 py-1.5 text-xs bg-white dark:bg-[#0E121A] border border-slate-200 dark:border-slate-700 rounded text-slate-900 dark:text-slate-100"
           />
         </div>
+      </div>
 
+      {/* Wiring Mode, Channel, Function */}
+      <div className="grid grid-cols-3 gap-3">
         <div>
           <label className={`block text-xs font-medium mb-1 ${syncLabelClass(inputTypeSyncState)}`}>
             Input Type

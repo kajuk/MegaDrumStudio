@@ -12,10 +12,12 @@ import {
   ConnectionStatusPopup,
 } from './components/ConnectionStatusPopup';
 import { MidiAlertModal } from './components/MidiAlertModal';
+import { CustomPadNamesModal } from './components/CustomPadNamesModal';
 import { cloneConfig, FACTORY_PRESETS } from './data/presets';
 import { SysexBatchResult, SysexTaskItem, useWebMidi } from './hooks/useWebMidi';
 import {
   ActiveHit,
+  getMaxCustomPadNames,
   GlobalConfig,
   MD_MCU_TYPES,
   MegaDrumConfig,
@@ -42,6 +44,7 @@ import {
   buildRequestConfigCurrentSysex,
   buildRequestConfigNameSysex,
   buildRequestCurveSysex,
+  buildRequestCustomNameSysex,
   buildRequestGlobalMiscSysex,
   buildRequestMcuSysex,
   buildRequestMiscSysex,
@@ -51,6 +54,7 @@ import {
   buildRequestPosSysex,
   buildRequestVersionSysex,
   buildSaveConfigNameSysex,
+  buildSaveCustomNameSysex,
   buildSaveSlotSysex,
   encode3rdSysex,
   encodeCurveSysex,
@@ -106,6 +110,16 @@ function isValidConfigV2(obj: unknown): obj is MegaDrumConfig {
   );
 }
 
+function normalizeConfig(c: MegaDrumConfig): MegaDrumConfig {
+  const customNames = Array.from({ length: 32 }, (_, i) =>
+    typeof c.customNames?.[i] === 'string' ? c.customNames[i].slice(0, 8) : `Custom${i + 1}`
+  );
+  return {
+    ...c,
+    customNames,
+  };
+}
+
 export default function App() {
   const [theme, setTheme] = useState<AppThemeId>(() => getSavedTheme());
   const [effectiveTheme, setEffectiveTheme] = useState<Exclude<AppThemeId, 'system'>>(() =>
@@ -117,7 +131,7 @@ export default function App() {
       const saved = localStorage.getItem(STORAGE_KEY);
       if (saved) {
         const parsed = JSON.parse(saved);
-        if (isValidConfigV2(parsed)) return parsed;
+        if (isValidConfigV2(parsed)) return normalizeConfig(parsed);
       }
     } catch {
       // Ignore corrupt storage
@@ -143,6 +157,7 @@ export default function App() {
   const [notice, setNotice] = useState<{ text: string; isError?: boolean } | null>(null);
   const [connectionPopup, setConnectionPopup] = useState<ConnectionPopupData | null>(null);
   const [alertModalOpen, setAlertModalOpen] = useState<boolean>(false);
+  const [customNamesModalOpen, setCustomNamesModalOpen] = useState<boolean>(false);
   const lastAlertKeyRef = useRef<string>('');
   const [connectTriggerId, setConnectTriggerId] = useState<number>(0);
   const [detectedHardware, setDetectedHardware] = useState<{
@@ -1047,12 +1062,27 @@ export default function App() {
       });
     }
 
+    if (cfg.global.customPadNames) {
+      const customCount = getMaxCustomPadNames(
+        detectedHardware.mcuTypeId ?? cfg.mcuTypeId
+      );
+      for (let idx = 0; idx < customCount; idx++) {
+        tasks.push({
+          kind: 'request',
+          packet: buildRequestCustomNameSysex(idx, ch),
+          expectedCmd: MD_SYSEX_CMD.CUSTOM_NAME,
+          expectedId: idx,
+          label: `Custom Pad Name ${idx + 1}`,
+        });
+      }
+    }
+
     const res = await executeQueue(
       tasks,
       (r) => `Get All complete: synced ${r.completed} blocks from MegaDrum`
     );
     if (res.ok) setSelectedPresetId('custom');
-  }, [executeQueue]);
+  }, [detectedHardware.mcuTypeId, executeQueue]);
 
   const handleSendAllToModule = useCallback(async () => {
     const cfg = configRef.current;
@@ -1128,6 +1158,23 @@ export default function App() {
       });
     }
 
+    if (cfg.global.customPadNames && cfg.customNames) {
+      const customCount = getMaxCustomPadNames(
+        detectedHardware.mcuTypeId ?? cfg.mcuTypeId
+      );
+      for (let idx = 0; idx < customCount; idx++) {
+        const name = cfg.customNames[idx] || `Custom${idx + 1}`;
+        tasks.push({
+          kind: 'send',
+          packet: buildSaveCustomNameSysex(idx, name, ch),
+          verifyRequest: buildRequestCustomNameSysex(idx, ch),
+          expectedCmd: MD_SYSEX_CMD.CUSTOM_NAME,
+          expectedId: idx,
+          label: `Custom Pad Name ${idx + 1}`,
+        });
+      }
+    }
+
     tasks.push({
       kind: 'request',
       packet: buildRequestConfigCountSysex(ch),
@@ -1139,7 +1186,7 @@ export default function App() {
       tasks,
       (r) => `Send All complete: verified ${r.completed} blocks on MegaDrum`
     );
-  }, [executeQueue]);
+  }, [detectedHardware.mcuTypeId, executeQueue]);
 
   const handleRequestPairSysex = useCallback(
     async (pairIdx: number) => {
@@ -1530,6 +1577,86 @@ export default function App() {
     );
   }, [executeQueue]);
 
+  const handleUpdateCustomName = useCallback((index0Based: number, name: string) => {
+    setSelectedPresetId('custom');
+    setConfig((prev) => {
+      const nextNames = [...(prev.customNames || Array.from({ length: 32 }, (_, i) => `Custom${i + 1}`))];
+      nextNames[index0Based] = name.slice(0, 8);
+      return { ...prev, customNames: nextNames };
+    });
+  }, []);
+
+  const handleGetCustomName = useCallback(
+    async (index0Based: number) => {
+      const ch = configRef.current.chainId;
+      await executeQueue(
+        [
+          {
+            kind: 'request',
+            packet: buildRequestCustomNameSysex(index0Based, ch),
+            expectedCmd: MD_SYSEX_CMD.CUSTOM_NAME,
+            expectedId: index0Based,
+            label: `Read Custom Pad Name ${index0Based + 1}`,
+          },
+        ],
+        () => `Read Custom Pad Name ${index0Based + 1} from MegaDrum EEPROM`
+      );
+    },
+    [executeQueue]
+  );
+
+  const handleSendCustomName = useCallback(
+    async (index0Based: number, name: string) => {
+      const ch = configRef.current.chainId;
+      await executeQueue(
+        [
+          {
+            kind: 'send',
+            packet: buildSaveCustomNameSysex(index0Based, name, ch),
+            verifyRequest: buildRequestCustomNameSysex(index0Based, ch),
+            expectedCmd: MD_SYSEX_CMD.CUSTOM_NAME,
+            expectedId: index0Based,
+            label: `Send Custom Pad Name ${index0Based + 1}`,
+          },
+        ],
+        () => `Saved & verified Custom Pad Name ${index0Based + 1} in MegaDrum EEPROM`
+      );
+    },
+    [executeQueue]
+  );
+
+  const handleGetAllCustomNames = useCallback(async () => {
+    const cfg = configRef.current;
+    const ch = cfg.chainId;
+    const count = getMaxCustomPadNames(detectedHardware.mcuTypeId ?? cfg.mcuTypeId);
+    const tasks: SysexTaskItem[] = Array.from({ length: count }, (_, idx) => ({
+      kind: 'request',
+      packet: buildRequestCustomNameSysex(idx, ch),
+      expectedCmd: MD_SYSEX_CMD.CUSTOM_NAME,
+      expectedId: idx,
+      label: `Custom Pad Name ${idx + 1}`,
+    }));
+    await executeQueue(tasks, () => `Synced all ${count} custom pad names from MegaDrum EEPROM`);
+  }, [detectedHardware.mcuTypeId, executeQueue]);
+
+  const handleSendAllCustomNames = useCallback(async () => {
+    const cfg = configRef.current;
+    const ch = cfg.chainId;
+    const count = getMaxCustomPadNames(detectedHardware.mcuTypeId ?? cfg.mcuTypeId);
+    const tasks: SysexTaskItem[] = Array.from({ length: count }, (_, idx) => {
+      const name = cfg.customNames?.[idx] || `Custom${idx + 1}`;
+      return {
+        kind: 'send',
+        packet: buildSaveCustomNameSysex(idx, name, ch),
+        verifyRequest: buildRequestCustomNameSysex(idx, ch),
+        expectedCmd: MD_SYSEX_CMD.CUSTOM_NAME,
+        expectedId: idx,
+        label: `Custom Pad Name ${idx + 1}`,
+      };
+    });
+    await executeQueue(tasks, () => `Saved & verified all ${count} custom pad names in MegaDrum EEPROM`);
+  }, [detectedHardware.mcuTypeId, executeQueue]);
+
   const handlePrimaryTopBarAction = useCallback(async () => {
     if (midi.connectionPhase === 'connected') {
       handleDisconnectMidi();
@@ -1569,7 +1696,7 @@ export default function App() {
         try {
           const parsed = JSON.parse(text);
           if (isValidConfigV2(parsed)) {
-            setConfig(parsed);
+            setConfig(normalizeConfig(parsed));
             setSelectedPresetId('custom');
             showNotice(`Imported JSON kit snapshot: ${file.name}`);
             return;
@@ -1745,6 +1872,13 @@ export default function App() {
           curves={config.curves}
           syncSnapshot={moduleSnapshot}
           maxInputs={config.global.maxInputs}
+          mcuTypeId={
+            midi.connected && detectedHardware.mcuTypeId !== null
+              ? detectedHardware.mcuTypeId
+              : config.mcuTypeId
+          }
+          customNames={config.customNames || []}
+          customPadNamesEnabled={config.global.customPadNames}
           selectedPairIndex={selectedPairIndex}
           activeHit={activeHit}
           audioEnabled={audioEnabled}
@@ -1758,6 +1892,7 @@ export default function App() {
           onTriggerPad={handleTriggerPad}
           onSendPairSysex={handleSendPairSysex}
           onRequestPairSysex={handleRequestPairSysex}
+          onOpenCustomNamesManager={() => setCustomNamesModalOpen(true)}
         />
       )}
 
@@ -1811,6 +1946,9 @@ export default function App() {
           globalConfig={config.global}
           miscConfig={config.misc}
           syncSnapshot={moduleSnapshot}
+          customNames={config.customNames || []}
+          snapCustomNames={moduleSnapshot.customNames}
+          midiConnected={midi.connected}
           chainId={config.chainId}
           version={
             midi.connected && detectedHardware.version
@@ -1828,6 +1966,11 @@ export default function App() {
           onUpdateGlobal={handleUpdateGlobal}
           onUpdateMisc={handleUpdateMisc}
           onUpdateChainId={handleUpdateChainId}
+          onUpdateCustomName={handleUpdateCustomName}
+          onGetCustomName={handleGetCustomName}
+          onSendCustomName={handleSendCustomName}
+          onGetAllCustomNames={handleGetAllCustomNames}
+          onSendAllCustomNames={handleSendAllCustomNames}
           onRevertGlobalToModule={handleRevertGlobalToModule}
           onRevertMiscToModule={handleRevertMiscToModule}
           onGetGlobal={handleGetGlobal}
@@ -1931,6 +2074,27 @@ export default function App() {
         onRequestPermission={handleRequestMidiPermission}
         onScanPorts={() => void midi.scanPorts({ userTriggered: true })}
         onDismiss={handleDismissAlertModal}
+      />
+
+      <CustomPadNamesModal
+        open={customNamesModalOpen}
+        onDismiss={() => setCustomNamesModalOpen(false)}
+        customNames={config.customNames || []}
+        snapCustomNames={moduleSnapshot.customNames}
+        mcuTypeId={
+          midi.connected && detectedHardware.mcuTypeId !== null
+            ? detectedHardware.mcuTypeId
+            : config.mcuTypeId
+        }
+        customPadNamesEnabled={config.global.customPadNames}
+        midiConnected={midi.connected}
+        onUpdateCustomName={handleUpdateCustomName}
+        onGetCustomName={handleGetCustomName}
+        onSendCustomName={handleSendCustomName}
+        onGetAllCustomNames={handleGetAllCustomNames}
+        onSendAllCustomNames={handleSendAllCustomNames}
+        onEnableCustomPadNames={() => handleUpdateGlobal({ customPadNames: true })}
+        compact
       />
 
       {notice && (

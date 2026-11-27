@@ -482,6 +482,7 @@ function buildConfig(
     pads: createBase55Pads(padOverrides),
     thirdZones: createBase27ThirdZones(thirdOverrides),
     positionals: createBase55Positionals(),
+    customNames: Array.from({ length: 32 }, (_, i) => `Custom${i + 1}`),
   };
 }
 

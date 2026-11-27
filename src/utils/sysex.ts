@@ -1,4 +1,5 @@
 import {
+  getMaxCustomPadNames,
   MD_MCU_TYPES,
   MegaDrumConfig,
   PadConfig,
@@ -224,6 +225,27 @@ export function buildSaveConfigNameSysex(slot0Based: number, name: string, chain
   const trimmed = (name || '').slice(0, 16);
   for (let i = 0; i < 16; i++) {
     const charCode = i < trimmed.length ? trimmed.charCodeAt(i) : 0x20;
+    bytes.push(...byte2sysex(charCode));
+  }
+  bytes.push(SYSEX_END);
+  return new Uint8Array(bytes);
+}
+
+export function buildRequestCustomNameSysex(index0Based: number, chainId = 0): Uint8Array {
+  return buildIdRequest(MD_SYSEX_CMD.CUSTOM_NAME, index0Based, chainId);
+}
+
+export function buildSaveCustomNameSysex(index0Based: number, name: string, chainId = 0): Uint8Array {
+  const bytes: number[] = [
+    SYSEX_START,
+    MD_SYSEX,
+    chainId & 0x7f,
+    MD_SYSEX_CMD.CUSTOM_NAME,
+    index0Based & 0x7f,
+  ];
+  const trimmed = (name || '').slice(0, 8).padEnd(8, ' ');
+  for (let i = 0; i < 8; i++) {
+    const charCode = trimmed.charCodeAt(i) & 0x7f;
     bytes.push(...byte2sysex(charCode));
   }
   bytes.push(SYSEX_END);
@@ -515,6 +537,15 @@ export function buildFullConfigSyxFile(config: MegaDrumConfig): Uint8Array {
 
   for (let c = 0; c < config.curves.length; c++) {
     chunks.push(encodeCurveSysex(c, config.curves[c].points, config.chainId));
+  }
+
+  if (config.global.customPadNames && config.customNames) {
+    const customCount = getMaxCustomPadNames(config.mcuTypeId);
+    for (let cn = 0; cn < customCount; cn++) {
+      if (config.customNames[cn]) {
+        chunks.push(buildSaveCustomNameSysex(cn, config.customNames[cn], config.chainId));
+      }
+    }
   }
 
   const totalLen = chunks.reduce((sum, c) => sum + c.length, 0);
@@ -810,6 +841,29 @@ export function applyIncomingSysexPacket(
     };
   }
 
+  if (cmd === MD_SYSEX_CMD.CUSTOM_NAME && packet.length >= MD_SYSEX_SIZE.CUSTOM_NAME) {
+    const customIndex = pointer;
+    let nameStr = '';
+    for (let i = 5; i < 21; i += 2) {
+      const code = sysex2byte(packet[i], packet[i + 1]);
+      if (code === 0 || code === 0xff) break;
+      nameStr += String.fromCharCode(code);
+    }
+    const cleaned = nameStr.trim();
+    if (!next.customNames) {
+      next.customNames = Array.from({ length: 32 }, (_, k) => `Custom${k + 1}`);
+    }
+    if (customIndex >= 0 && customIndex < 32) {
+      next.customNames[customIndex] = cleaned || `Custom${customIndex + 1}`;
+    }
+    return {
+      cmd,
+      id: customIndex,
+      updated: next,
+      description: `Custom EEPROM Pad Name ${customIndex + 1}: "${cleaned || 'Unnamed'}"`,
+    };
+  }
+
   if (cmd === MD_SYSEX_CMD.CONFIG_COUNT && packet.length >= MD_SYSEX_SIZE.CONFIG_COUNT) {
     const count = packet[4] & 0x7f;
     next.global.maxConfigCount = Math.max(4, Math.min(64, count));
@@ -1011,6 +1065,14 @@ export function serializeMds(config: MegaDrumConfig): string {
     lines.push(``);
   });
 
+  if (config.customNames && config.customNames.length > 0) {
+    lines.push(`# Custom Pad Names`);
+    config.customNames.forEach((cName, idx) => {
+      lines.push(`custom_name[${idx + 1}]=${cName}`);
+    });
+    lines.push(``);
+  }
+
   return lines.join('\n');
 }
 
@@ -1125,6 +1187,18 @@ export function parseMds(text: string, fallback: MegaDrumConfig): MegaDrumConfig
         const pIdx = Number(curveMatch[2]) - 1;
         if (next.curves[cIdx] && pIdx >= 0 && pIdx < 9 && !Number.isNaN(asNum)) {
           next.curves[cIdx].points[pIdx] = Math.max(2, Math.min(255, asNum));
+        }
+        continue;
+      }
+
+      const customNameMatch = key.match(/^custom_name\[(\d+)\]$/);
+      if (customNameMatch) {
+        const cIdx = Number(customNameMatch[1]) - 1;
+        if (!next.customNames) {
+          next.customNames = Array.from({ length: 32 }, (_, k) => `Custom${k + 1}`);
+        }
+        if (cIdx >= 0 && cIdx < 32) {
+          next.customNames[cIdx] = val.slice(0, 8);
         }
       }
     }

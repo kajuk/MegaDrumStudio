@@ -5,11 +5,15 @@ import { getFieldSync, getGlobalSyncSummary, getMiscSyncSummary } from '../utils
 import { AppThemeId, THEME_OPTIONS } from '../utils/theme';
 import { SliderParam } from './KitPadsView';
 import { ParamLabelRow, SectionSyncBanner, syncInputClass, syncLabelClass } from './SyncIndicator';
+import { CustomPadNamesManager } from './CustomPadNamesManager';
 
 interface GlobalMiscViewProps {
   globalConfig: GlobalConfig;
   miscConfig: MiscConfig;
   syncSnapshot: ModuleSyncSnapshot;
+  customNames: string[];
+  snapCustomNames?: (string | null)[];
+  midiConnected: boolean;
   chainId: number;
   version: string;
   mcuTypeId: number;
@@ -19,6 +23,11 @@ interface GlobalMiscViewProps {
   onUpdateGlobal: (patch: Partial<GlobalConfig>) => void;
   onUpdateMisc: (patch: Partial<MiscConfig>) => void;
   onUpdateChainId: (chainId: number) => void;
+  onUpdateCustomName: (index0Based: number, name: string) => void;
+  onGetCustomName: (index0Based: number) => void;
+  onSendCustomName: (index0Based: number, name: string) => void;
+  onGetAllCustomNames: () => void;
+  onSendAllCustomNames: () => void;
   onRevertGlobalToModule: () => void;
   onRevertMiscToModule: () => void;
   onGetGlobal: () => void;
@@ -32,6 +41,9 @@ export const GlobalMiscView: React.FC<GlobalMiscViewProps> = ({
   globalConfig,
   miscConfig,
   syncSnapshot,
+  customNames,
+  snapCustomNames,
+  midiConnected,
   chainId,
   version,
   mcuTypeId,
@@ -41,6 +53,11 @@ export const GlobalMiscView: React.FC<GlobalMiscViewProps> = ({
   onUpdateGlobal,
   onUpdateMisc,
   onUpdateChainId,
+  onUpdateCustomName,
+  onGetCustomName,
+  onSendCustomName,
+  onGetAllCustomNames,
+  onSendAllCustomNames,
   onRevertGlobalToModule,
   onRevertMiscToModule,
   onGetGlobal,
@@ -445,6 +462,23 @@ export const GlobalMiscView: React.FC<GlobalMiscViewProps> = ({
             </div>
           </section>
         </div>
+
+        {/* Custom EEPROM Pad Names (SysEx 0x08) */}
+        <section className="border border-[var(--md-border)] rounded-lg bg-[var(--md-panel)] p-5">
+          <CustomPadNamesManager
+            customNames={customNames}
+            snapCustomNames={snapCustomNames}
+            mcuTypeId={mcuTypeId}
+            customPadNamesEnabled={globalConfig.customPadNames}
+            midiConnected={midiConnected}
+            onUpdateCustomName={onUpdateCustomName}
+            onGetCustomName={onGetCustomName}
+            onSendCustomName={onSendCustomName}
+            onGetAllCustomNames={onGetAllCustomNames}
+            onSendAllCustomNames={onSendAllCustomNames}
+            onEnableCustomPadNames={() => onUpdateGlobal({ customPadNames: true })}
+          />
+        </section>
 
         {/* UI Appearance & Theme */}
         <section className="border border-[var(--md-border)] rounded-lg bg-[var(--md-panel)] p-5 space-y-4">

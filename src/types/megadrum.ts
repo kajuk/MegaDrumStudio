@@ -171,6 +171,7 @@ export interface MegaDrumConfig {
   pads: PadConfig[]; // 55 inputs (index 0 = input 1 Kick, index 1..54 = pairs 1..27)
   thirdZones: ThirdZoneConfig[]; // 27 third-zone configs (pair 1..27)
   positionals: PositionalConfig[]; // 55 positional sensing configs
+  customNames: string[]; // 32 custom pad names (0..31, max 8 chars each)
 }
 
 export type MidiLogEventType =
@@ -238,6 +239,7 @@ export interface ModuleSyncSnapshot {
   thirdZones: (ThirdZoneConfig | null)[];
   positionals: (PositionalConfig | null)[];
   curves: (CurveConfig | null)[];
+  customNames: (string | null)[];
 }
 
 export const MD_CURVES_LIST: {
@@ -376,4 +378,26 @@ export function getPairZoneMode(leftPad: PadConfig, rightPad?: PadConfig): ZoneM
   if (leftPad.threeWay) return 'three_way_roland';
   if (rightPad?.type) return 'piezo_switch';
   return 'dual_piezo';
+}
+
+export function getMaxCustomPadNames(mcuTypeId: number): number {
+  if (mcuTypeId === 1) return 16; // Atmega644
+  return 32;
+}
+
+export function getPadDisplayName(
+  pad: PadConfig,
+  customNames?: string[]
+): string {
+  if (pad.customNameIndex === 0) {
+    return MD_PADS_NAMES_LIST[pad.id - 1] || pad.name || `Input ${pad.id}`;
+  }
+  if (pad.customNameIndex >= 1 && pad.customNameIndex <= 72) {
+    return MD_CUSTOM_PADS_NAMES_LIST[pad.customNameIndex - 1];
+  }
+  const customIdx = pad.customNameIndex - 73;
+  if (customNames && customNames[customIdx]) {
+    return customNames[customIdx];
+  }
+  return `Custom${customIdx + 1}`;
 }
