@@ -5,6 +5,7 @@ import { KitPadsView } from './components/KitPadsView';
 import { PedalView } from './components/PedalView';
 import { CurvesView } from './components/CurvesView';
 import { GlobalMiscView } from './components/GlobalMiscView';
+import { MidiLogView } from './components/MidiLogView';
 import { SysexMonitorView } from './components/SysexMonitorView';
 import { cloneConfig, FACTORY_PRESETS } from './data/presets';
 import { SysexBatchResult, SysexTaskItem, useWebMidi } from './hooks/useWebMidi';
@@ -1494,12 +1495,28 @@ export default function App() {
         />
       )}
 
+      {activeTab === 'log' && (
+        <MidiLogView
+          logs={midi.midiLogs}
+          config={config}
+          midiConnected={midi.connected}
+          livePedalPosition={livePedalPosition}
+          onClearLogs={midi.clearLogs}
+          onTestHit={() => handleTriggerPad(testHitPadId, 'head')}
+          onJumpToPadPair={(pairIdx) => {
+            setSelectedPairIndex(pairIdx);
+            setActiveTab('pads');
+          }}
+        />
+      )}
+
       {activeTab === 'sysex' && (
         <SysexMonitorView
           config={config}
           midiConnected={midi.connected}
           logs={midi.midiLogs}
           onClearLogs={midi.clearLogs}
+          onOpenMidiLog={() => setActiveTab('log')}
           onGetAllFromModule={handleGetAllFromModule}
           onSendAllToModule={handleSendAllToModule}
           onSaveToSlot={async (slot) => {

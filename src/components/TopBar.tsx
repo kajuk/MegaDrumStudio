@@ -1,7 +1,7 @@
 import React from 'react';
 import { MidiConnectionPhase } from '../hooks/useWebMidi';
 
-export type WorkspaceTab = 'pads' | 'pedal' | 'curves' | 'global' | 'sysex';
+export type WorkspaceTab = 'pads' | 'pedal' | 'curves' | 'global' | 'log' | 'sysex';
 
 interface TopBarProps {
   activeTab: WorkspaceTab;
@@ -17,6 +17,7 @@ const NAV_ITEMS: { id: WorkspaceTab; label: string }[] = [
   { id: 'pedal', label: 'Hi-Hat Pedal' },
   { id: 'curves', label: 'Curves' },
   { id: 'global', label: 'Global & Misc' },
+  { id: 'log', label: 'MIDI Log' },
   { id: 'sysex', label: 'SysEx & Firmware' },
 ];
 

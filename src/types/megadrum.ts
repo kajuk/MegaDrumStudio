@@ -171,16 +171,29 @@ export interface MegaDrumConfig {
   positionals: PositionalConfig[]; // 55 positional sensing configs
 }
 
+export type MidiLogEventType =
+  | 'note'
+  | 'note_off'
+  | 'cc'
+  | 'sysex'
+  | 'aftertouch'
+  | 'program'
+  | 'system'
+  | 'error';
+
 export interface MidiEventLog {
   id: string;
   timestamp: string;
+  timestampMs: number;
   direction: 'in' | 'out';
-  type: 'note' | 'cc' | 'sysex' | 'aftertouch' | 'system' | 'error';
+  type: MidiLogEventType;
   channel?: number;
   note?: number;
   velocity?: number;
   cc?: number;
   ccValue?: number;
+  program?: number;
+  byteLength?: number;
   summary: string;
   rawHex: string;
 }

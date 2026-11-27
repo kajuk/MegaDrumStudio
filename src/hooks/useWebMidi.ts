@@ -115,17 +115,19 @@ export function useWebMidi(options: UseWebMidiOptions = {}) {
     }
   }, [selectedOutputId]);
 
-  const appendLog = useCallback((entry: Omit<MidiEventLog, 'id' | 'timestamp'>) => {
+  const appendLog = useCallback((entry: Omit<MidiEventLog, 'id' | 'timestamp' | 'timestampMs'>) => {
     const now = new Date();
     const timestamp =
       now.toTimeString().slice(0, 8) + '.' + String(now.getMilliseconds()).padStart(3, '0');
+    const timestampMs = typeof performance !== 'undefined' ? performance.now() : Date.now();
     setMidiLogs((prev) => [
       {
         ...entry,
         id: `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
         timestamp,
+        timestampMs,
       },
-      ...prev.slice(0, 199),
+      ...prev.slice(0, 499),
     ]);
   }, []);
 
@@ -405,9 +407,9 @@ export function useWebMidi(options: UseWebMidiOptions = {}) {
               appendLog({
                 direction: 'in',
                 type: 'sysex',
+                byteLength: pkt.length,
                 summary: `SysEx In: ${cmdName} (${pkt.length}B)`,
-                rawHex:
-                  formatBytesHex(pkt.slice(0, 24)) + (pkt.length > 24 ? ' ... F7' : ''),
+                rawHex: formatBytesHex(pkt),
               });
 
               // Notify any waiting SysEx transaction first
@@ -436,10 +438,22 @@ export function useWebMidi(options: UseWebMidiOptions = {}) {
               channel,
               note: d1,
               velocity: d2,
+              byteLength: data.length,
               summary: `Note On #${d1} (vel ${d2})`,
               rawHex: formatBytesHex(data),
             });
             callbacksRef.current.onIncomingNote?.(channel, d1, d2);
+          } else if (status === 0x80 || (status === 0x90 && d2 === 0)) {
+            appendLog({
+              direction: 'in',
+              type: 'note_off',
+              channel,
+              note: d1,
+              velocity: d2,
+              byteLength: data.length,
+              summary: `Note Off #${d1}`,
+              rawHex: formatBytesHex(data),
+            });
           } else if (status === 0xb0) {
             appendLog({
               direction: 'in',
@@ -447,18 +461,40 @@ export function useWebMidi(options: UseWebMidiOptions = {}) {
               channel,
               cc: d1,
               ccValue: d2,
+              byteLength: data.length,
               summary: `CC #${d1} = ${d2}`,
               rawHex: formatBytesHex(data),
             });
             callbacksRef.current.onIncomingCC?.(channel, d1, d2);
-          } else if (status === 0xa0 || status === 0xd0) {
+          } else if (status === 0xa0) {
             appendLog({
               direction: 'in',
               type: 'aftertouch',
               channel,
               note: d1,
               velocity: d2,
-              summary: `Choke / Aftertouch (${d1})`,
+              byteLength: data.length,
+              summary: d2 > 0 ? `Choke / PolyAT #${d1} (pressure ${d2})` : `Choke Release #${d1}`,
+              rawHex: formatBytesHex(data),
+            });
+          } else if (status === 0xd0) {
+            appendLog({
+              direction: 'in',
+              type: 'aftertouch',
+              channel,
+              velocity: d1,
+              byteLength: data.length,
+              summary: `Channel Pressure (${d1})`,
+              rawHex: formatBytesHex(data),
+            });
+          } else if (status === 0xc0) {
+            appendLog({
+              direction: 'in',
+              type: 'program',
+              channel,
+              program: d1,
+              byteLength: data.length,
+              summary: `Program Change #${d1}`,
               rawHex: formatBytesHex(data),
             });
           }
@@ -498,9 +534,9 @@ export function useWebMidi(options: UseWebMidiOptions = {}) {
         appendLog({
           direction: 'out',
           type: 'sysex',
+          byteLength: packet.length,
           summary: label ? `${label} (${packet.length}B)` : `SysEx Out (${packet.length}B)`,
-          rawHex:
-            formatBytesHex(packet.slice(0, 24)) + (packet.length > 24 ? ' ... F7' : ''),
+          rawHex: formatBytesHex(packet),
         });
         return { sent: true };
       } catch (err) {
@@ -725,7 +761,7 @@ export function useWebMidi(options: UseWebMidiOptions = {}) {
   );
 
   const logSimulatedEvent = useCallback(
-    (entry: Omit<MidiEventLog, 'id' | 'timestamp'>) => {
+    (entry: Omit<MidiEventLog, 'id' | 'timestamp' | 'timestampMs'>) => {
       appendLog(entry);
     },
     [appendLog]

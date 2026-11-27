@@ -24,6 +24,7 @@ interface SysexMonitorViewProps {
     timeoutMs?: number
   ) => Promise<'ok' | 'crc' | 'read' | 'timeout' | 'midi_not_open'>;
   onNotice: (msg: string) => void;
+  onOpenMidiLog?: () => void;
 }
 
 export const SysexMonitorView: React.FC<SysexMonitorViewProps> = ({
@@ -42,6 +43,7 @@ export const SysexMonitorView: React.FC<SysexMonitorViewProps> = ({
   onSendBootloaderEnter,
   onSendFirmwareFrameWithAck,
   onNotice,
+  onOpenMidiLog,
 }) => {
   const [subTab, setSubTab] = useState<'sysex' | 'firmware'>('sysex');
   const [filterType, setFilterType] = useState<'all' | 'sysex' | 'note' | 'cc' | 'error'>('all');
@@ -246,14 +248,25 @@ export const SysexMonitorView: React.FC<SysexMonitorViewProps> = ({
                   </div>
                 </div>
 
-                <button
-                  type="button"
-                  onClick={onClearLogs}
-                  className="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white"
-                >
-                  <Trash2 className="w-3.5 h-3.5" />
-                  Clear Log
-                </button>
+                <div className="flex items-center gap-2">
+                  {onOpenMidiLog && (
+                    <button
+                      type="button"
+                      onClick={onOpenMidiLog}
+                      className="px-2.5 py-1 text-xs font-medium rounded border border-[var(--md-border-strong)] bg-[var(--md-control)] text-slate-700 dark:text-slate-200 hover:bg-[var(--md-hover)] whitespace-nowrap"
+                    >
+                      Open Visual &amp; RAW Log
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    onClick={onClearLogs}
+                    className="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                    Clear Log
+                  </button>
+                </div>
               </div>
 
               <div className="max-h-96 overflow-y-auto">
