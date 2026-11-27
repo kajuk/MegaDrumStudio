@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en" class="dark" data-theme="dark">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>MegaDrum Studio — Drum Trigger &amp; SysEx Configuration</title>
+    <meta
+      name="description"
+      content="Modern cross-platform configuration studio and Web MIDI SysEx manager for MegaDrum electronic drum trigger modules."
+    />
+    <meta property="og:title" content="MegaDrum Studio — Drum Trigger &amp; SysEx Configuration" />
+    <meta
+      property="og:description"
+      content="Modern cross-platform configuration studio and Web MIDI SysEx manager for MegaDrum electronic drum trigger modules."
+    />
+    <meta property="og:type" content="website" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="theme-color" content="#0B0E14" />
+    <script>
+      (function () {
+        try {
+          var t = localStorage.getItem('megadrum_studio_theme_v2') || localStorage.getItem('megadrum_studio_theme_v1') || 'dark';
+          var eff = t === 'system'
+            ? (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light')
+            : (t === 'light' || t === 'warm' || t === 'dark' || t === 'midnight' ? t : 'dark');
+          var isDark = eff === 'dark' || eff === 'midnight';
+          var root = document.documentElement;
+          if (isDark) root.classList.add('dark');
+          else root.classList.remove('dark');
+          root.setAttribute('data-theme', eff);
+          root.style.colorScheme = isDark ? 'dark' : 'light';
+          var colors = { light: '#f8fafc', warm: '#f4f1ea', dark: '#0b0e14', midnight: '#020408' };
+          var meta = document.querySelector('meta[name="theme-color"]');
+          if (meta && colors[eff]) meta.setAttribute('content', colors[eff]);
+        } catch (e) {}
+      })();
+    </script>
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="MegaDrum" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <link rel="icon" type="image/svg+xml" href="/icon.svg" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400..700;1,9..40,400..700&family=JetBrains+Mono:wght@400;500;600&family=Plus+Jakarta+Sans:wght@500;600;700&display=swap"
+      rel="stylesheet"
+    />
+  </head>
+  <body class="bg-[var(--md-canvas)] text-slate-900 dark:text-slate-100 antialiased selection:bg-blue-500/20 selection:text-blue-600 dark:selection:text-blue-400">
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

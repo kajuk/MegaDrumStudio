@@ -1,0 +1,6 @@
+{
+  "name": "MegaDrum Studio",
+  "description": "Modern cross-platform configuration studio and Web MIDI SysEx manager for MegaDrum electronic drum trigger modules.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

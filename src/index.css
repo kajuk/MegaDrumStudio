@@ -1,0 +1,105 @@
+@import "tailwindcss";
+@custom-variant dark (&:where(.dark, .dark *));
+
+@layer base {
+  :root {
+    color-scheme: light;
+    --font-display: 'Plus Jakarta Sans', system-ui, sans-serif;
+    --font-sans: 'DM Sans', system-ui, sans-serif;
+    --font-mono: 'JetBrains Mono', ui-monospace, monospace;
+
+    /* Light (Daylight) */
+    --md-canvas: #f8fafc;
+    --md-header: #ffffff;
+    --md-toolbar: #f1f5f9;
+    --md-panel: #ffffff;
+    --md-inset: #f8fafc;
+    --md-control: #ffffff;
+    --md-control-alt: #f8fafc;
+    --md-border: #e2e8f0;
+    --md-border-strong: #cbd5e1;
+    --md-hover: #f1f5f9;
+  }
+
+  html[data-theme="warm"] {
+    color-scheme: light;
+    --md-canvas: #f4f1ea;
+    --md-header: #fcfaf5;
+    --md-toolbar: #ebe6db;
+    --md-panel: #fcfaf5;
+    --md-inset: #f3efe6;
+    --md-control: #fffefb;
+    --md-control-alt: #f5f1e8;
+    --md-border: #dfd8c8;
+    --md-border-strong: #c9c0ad;
+    --md-hover: #ede7db;
+  }
+
+  html.dark {
+    color-scheme: dark;
+    --md-canvas: #0b0e14;
+    --md-header: #0e121a;
+    --md-toolbar: #111620;
+    --md-panel: #111620;
+    --md-inset: #0b0e14;
+    --md-control: #141923;
+    --md-control-alt: #0e121a;
+    --md-border: #1e293b;
+    --md-border-strong: #334155;
+    --md-hover: #171e2c;
+  }
+
+  html.dark[data-theme="midnight"] {
+    color-scheme: dark;
+    --md-canvas: #020408;
+    --md-header: #070a10;
+    --md-toolbar: #090d14;
+    --md-panel: #0a0e16;
+    --md-inset: #04060a;
+    --md-control: #0f1520;
+    --md-control-alt: #0a0e16;
+    --md-border: #182132;
+    --md-border-strong: #2a3752;
+    --md-hover: #131b29;
+  }
+
+  body {
+    font-family: var(--font-sans);
+    font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+    background-color: var(--md-canvas);
+  }
+
+  h1, h2, h3, h4, .font-display {
+    font-family: var(--font-display);
+  }
+
+  .font-mono, code, pre {
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .tabular-nums {
+    font-variant-numeric: tabular-nums;
+  }
+}
+
+/* Custom slim scrollbars for dense hardware consoles */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(148, 163, 184, 0.3);
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(148, 163, 184, 0.5);
+}
+
+/* Range input styling for precision parameter sliders */
+input[type="range"] {
+  accent-color: #2563eb;
+}
