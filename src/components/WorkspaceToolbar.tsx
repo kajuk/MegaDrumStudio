@@ -5,14 +5,20 @@ import {
   ArrowUpFromLine,
   CheckCircle2,
   Download,
+  ExternalLink,
   FolderOpen,
+  KeyRound,
   Loader2,
   Play,
   Volume2,
   VolumeX,
   X,
 } from 'lucide-react';
-import { MidiConnectionPhase, MidiPortInfo } from '../hooks/useWebMidi';
+import {
+  MidiConnectionPhase,
+  MidiPermissionIssue,
+  MidiPortInfo,
+} from '../hooks/useWebMidi';
 import { FACTORY_PRESETS } from '../data/presets';
 import { SysexStatusState } from '../types/megadrum';
 import { AppThemeId } from '../utils/theme';
@@ -25,6 +31,11 @@ interface WorkspaceToolbarProps {
   hasMidiAccess: boolean;
   connectionPhase: MidiConnectionPhase;
   connectionMessage: string;
+  permissionIssue: MidiPermissionIssue;
+  permissionRequesting: boolean;
+  permissionAttemptCount: number;
+  isInIframe: boolean;
+  isFirefox: boolean;
   sysexStatus: SysexStatusState;
   onDismissSysexStatus: () => void;
   inputs: MidiPortInfo[];
@@ -34,6 +45,7 @@ interface WorkspaceToolbarProps {
   onSelectInput: (id: string) => void;
   onSelectOutput: (id: string) => void;
   onScanPorts: () => void;
+  onRequestPermission: () => void;
   onConnectMidi: () => void;
   onDisconnectMidi: () => void;
   onGetAll: () => void;
@@ -60,6 +72,11 @@ export const WorkspaceToolbar: React.FC<WorkspaceToolbarProps> = ({
   hasMidiAccess,
   connectionPhase,
   connectionMessage,
+  permissionIssue,
+  permissionRequesting,
+  permissionAttemptCount,
+  isInIframe,
+  isFirefox,
   sysexStatus,
   onDismissSysexStatus,
   inputs,
@@ -69,6 +86,7 @@ export const WorkspaceToolbar: React.FC<WorkspaceToolbarProps> = ({
   onSelectInput,
   onSelectOutput,
   onScanPorts,
+  onRequestPermission,
   onConnectMidi,
   onDisconnectMidi,
   onGetAll,
@@ -90,13 +108,16 @@ export const WorkspaceToolbar: React.FC<WorkspaceToolbarProps> = ({
 }) => {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const isBusy = sysexStatus.code === 'working';
+  const isPermissionAlert =
+    connectionPhase === 'error' ||
+    connectionPhase === 'sysex_blocked' ||
+    permissionIssue !== 'none';
   const hasAlert =
     sysexStatus.code === 'timeout' ||
     sysexStatus.code === 'midi_not_open' ||
     sysexStatus.code === 'error' ||
     sysexStatus.code === 'mismatch' ||
-    connectionPhase === 'error' ||
-    connectionPhase === 'sysex_blocked' ||
+    isPermissionAlert ||
     connectionPhase === 'no_ports';
 
   const alertText =
@@ -106,6 +127,8 @@ export const WorkspaceToolbar: React.FC<WorkspaceToolbarProps> = ({
     sysexStatus.code === 'mismatch'
       ? sysexStatus.message
       : connectionMessage;
+
+  const standaloneUrl = typeof window !== 'undefined' ? window.location.href : '#';
 
   return (
     <div className="border-b border-[var(--md-border)] bg-[var(--md-toolbar)] shrink-0">
@@ -447,27 +470,81 @@ export const WorkspaceToolbar: React.FC<WorkspaceToolbarProps> = ({
         </div>
       </div>
 
-      {/* Prominent Communication / Connection Error Strip */}
+      {/* Prominent Communication / WebMIDI Permission Helper Strip */}
       {hasAlert && (
         <div
           role="alert"
-          className="px-6 py-2 bg-red-50 dark:bg-red-950/60 border-t border-red-200 dark:border-red-900/80 flex items-center justify-between gap-3 text-xs text-red-800 dark:text-red-200"
+          className="px-6 py-2.5 bg-red-50 dark:bg-red-950/60 border-t border-red-200 dark:border-red-900/80 flex flex-wrap items-start justify-between gap-3 text-xs text-red-900 dark:text-red-100"
         >
-          <div className="flex items-center gap-2 min-w-0">
-            <AlertCircle className="w-4 h-4 text-red-600 dark:text-red-400 shrink-0" />
-            <span className="font-medium truncate">{alertText}</span>
-          </div>
-          <div className="flex items-center gap-2 shrink-0">
-            {(connectionPhase === 'error' || connectionPhase === 'sysex_blocked') &&
-              midiSupported && (
-                <button
-                  type="button"
-                  onClick={onScanPorts}
-                  className="px-2.5 py-1 text-[11px] font-semibold rounded border border-red-300 dark:border-red-700 bg-white dark:bg-red-900/40 text-red-800 dark:text-red-100 hover:bg-red-100 dark:hover:bg-red-900/70 whitespace-nowrap transition-colors"
-                >
-                  Retry Permission
-                </button>
+          <div className="flex items-start gap-2.5 min-w-0 flex-1">
+            <AlertCircle className="w-4 h-4 text-red-600 dark:text-red-400 shrink-0 mt-0.5" />
+            <div className="space-y-1 min-w-0">
+              <div className="font-semibold leading-snug">
+                {permissionIssue === 'addon_required'
+                  ? 'WebMIDI Site Permission Add-on Required'
+                  : permissionIssue === 'sysex_blocked'
+                  ? 'WebMIDI SysEx Permission Required'
+                  : permissionIssue === 'denied'
+                  ? 'WebMIDI Permission Blocked'
+                  : alertText}
+              </div>
+              {isPermissionAlert ? (
+                <div className="text-[11px] leading-relaxed text-red-800 dark:text-red-200 space-y-0.5">
+                  <p>{alertText}</p>
+                  {isInIframe ? (
+                    <p>
+                      Embedded preview frames often block browser WebMIDI prompts and Firefox&apos;s site permission add-on installer. Open this studio in a standalone browser tab, allow the WebMIDI prompt, then click <strong>Connect MIDI</strong>.
+                    </p>
+                  ) : isFirefox ? (
+                    <p>
+                      In Firefox: click <strong>Request WebMIDI Permission</strong>, then accept <strong>Continue to Installation → Add</strong> in the address bar. If no prompt appears, click the <strong>puzzle / lock icon</strong> in the address bar or check <code className="px-1 py-0.5 rounded bg-red-100 dark:bg-red-900/60 font-mono">about:addons</code> → <strong>Site Permissions</strong>.
+                    </p>
+                  ) : (
+                    <p>
+                      Click <strong>Request WebMIDI Permission</strong>, or click the site-settings icon in your browser&apos;s address bar to allow <strong>MIDI devices (SysEx)</strong>.
+                    </p>
+                  )}
+                  {permissionAttemptCount > 0 && !permissionRequesting && (
+                    <p className="font-mono text-[10px] text-red-700 dark:text-red-300">
+                      Browser declined prompt without opening dialog (check #{permissionAttemptCount}). Follow the address-bar / standalone-tab steps above.
+                    </p>
+                  )}
+                </div>
+              ) : (
+                <p className="text-[11px] text-red-800 dark:text-red-200 leading-relaxed">
+                  {alertText}
+                </p>
               )}
+            </div>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2 shrink-0">
+            {isPermissionAlert && midiSupported && (
+              <button
+                type="button"
+                disabled={permissionRequesting}
+                onClick={onRequestPermission}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-[11px] font-semibold rounded border border-red-300 dark:border-red-700 bg-white dark:bg-red-900/50 text-red-900 dark:text-white hover:bg-red-100 dark:hover:bg-red-900/80 disabled:opacity-60 whitespace-nowrap transition-colors"
+              >
+                {permissionRequesting ? (
+                  <Loader2 className="w-3.5 h-3.5 animate-spin shrink-0" />
+                ) : (
+                  <KeyRound className="w-3.5 h-3.5 shrink-0" />
+                )}
+                {permissionRequesting ? 'Waiting for prompt...' : 'Request WebMIDI Permission'}
+              </button>
+            )}
+            {isPermissionAlert && isInIframe && (
+              <a
+                href={standaloneUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-[11px] font-semibold rounded bg-red-700 text-white hover:bg-red-800 dark:bg-red-600 dark:hover:bg-red-500 whitespace-nowrap transition-colors"
+              >
+                <ExternalLink className="w-3.5 h-3.5 shrink-0" />
+                Open in Standalone Tab
+              </a>
+            )}
             <button
               type="button"
               onClick={onDismissSysexStatus}

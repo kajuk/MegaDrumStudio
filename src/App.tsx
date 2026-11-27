@@ -518,10 +518,20 @@ export default function App() {
         status: 'error',
         title: 'Failed to Connect to MegaDrum',
         message: result.message,
+        canRequestPermission: !midiRef.current.sysexAllowed || !midiRef.current.hasMidiAccess,
       });
     } else {
       pendingIdentifyPopupRef.current = true;
       setConnectTriggerId((c) => c + 1);
+    }
+    return result;
+  }, [midi, showNotice]);
+
+  const handleRequestMidiPermission = useCallback(async () => {
+    const result = await midi.scanPorts({ userTriggered: true });
+    showNotice(result.message, !result.ok);
+    if (result.ok) {
+      setConnectionPopup(null);
     }
     return result;
   }, [midi, showNotice]);
@@ -612,6 +622,8 @@ export default function App() {
         status: 'error',
         title: 'Failed to Connect to MegaDrum',
         message: midiRef.current.connectionMessage,
+        canRequestPermission:
+          midi.connectionPhase === 'sysex_blocked' || midi.connectionPhase === 'error',
       });
     }
   }, [connectTriggerId, midi.connectionPhase]);
@@ -1514,6 +1526,11 @@ export default function App() {
         hasMidiAccess={midi.hasMidiAccess}
         connectionPhase={midi.connectionPhase}
         connectionMessage={midi.connectionMessage}
+        permissionIssue={midi.permissionIssue}
+        permissionRequesting={midi.permissionRequesting}
+        permissionAttemptCount={midi.permissionAttemptCount}
+        isInIframe={midi.isInIframe}
+        isFirefox={midi.isFirefox}
         sysexStatus={midi.sysexStatus}
         onDismissSysexStatus={midi.clearSysexStatus}
         inputs={midi.inputs}
@@ -1522,7 +1539,8 @@ export default function App() {
         selectedOutputId={midi.selectedOutputId}
         onSelectInput={midi.setSelectedInputId}
         onSelectOutput={midi.setSelectedOutputId}
-        onScanPorts={midi.scanPorts}
+        onScanPorts={() => void midi.scanPorts({ userTriggered: true })}
+        onRequestPermission={handleRequestMidiPermission}
         onConnectMidi={handleConnectMidi}
         onDisconnectMidi={handleDisconnectMidi}
         onGetAll={handleGetAllFromModule}
@@ -1712,6 +1730,10 @@ export default function App() {
       <ConnectionStatusPopup
         popup={connectionPopup}
         onDismiss={handleDismissConnectionPopup}
+        onRequestPermission={handleRequestMidiPermission}
+        isInIframe={midi.isInIframe}
+        isFirefox={midi.isFirefox}
+        permissionRequesting={midi.permissionRequesting}
       />
 
       {notice && (

@@ -1,5 +1,14 @@
 import React, { useEffect, useState } from 'react';
-import { AlertCircle, CheckCircle2, Cpu, HardDrive, X } from 'lucide-react';
+import {
+  AlertCircle,
+  CheckCircle2,
+  Cpu,
+  ExternalLink,
+  HardDrive,
+  KeyRound,
+  Loader2,
+  X,
+} from 'lucide-react';
 
 export type ConnectionPopupData =
   | {
@@ -15,11 +24,16 @@ export type ConnectionPopupData =
       status: 'error';
       title: string;
       message: string;
+      canRequestPermission?: boolean;
     };
 
 interface ConnectionStatusPopupProps {
   popup: ConnectionPopupData | null;
   onDismiss: () => void;
+  onRequestPermission?: () => void;
+  isInIframe?: boolean;
+  isFirefox?: boolean;
+  permissionRequesting?: boolean;
 }
 
 const HOLD_VISIBLE_MS = 5000;
@@ -28,6 +42,10 @@ const FADE_DURATION_MS = 3000;
 export const ConnectionStatusPopup: React.FC<ConnectionStatusPopupProps> = ({
   popup,
   onDismiss,
+  onRequestPermission,
+  isInIframe = false,
+  isFirefox = false,
+  permissionRequesting = false,
 }) => {
   const [phase, setPhase] = useState<'entering' | 'visible' | 'fading'>('entering');
 
@@ -152,7 +170,42 @@ export const ConnectionStatusPopup: React.FC<ConnectionStatusPopupProps> = ({
             <p className="text-xs leading-relaxed text-slate-700 dark:text-slate-300">
               {popup.message}
             </p>
-            <div className="flex justify-end">
+            {popup.canRequestPermission && (
+              <p className="text-[11px] leading-relaxed text-slate-500 dark:text-slate-400">
+                {isInIframe
+                  ? 'If your browser blocks WebMIDI prompts inside this embedded frame, open the studio in a standalone tab first.'
+                  : isFirefox
+                  ? 'Click Request WebMIDI Permission and accept Firefox’s address bar add-on prompt (or enable Site Permissions via the lock/puzzle icon).'
+                  : 'Click Request WebMIDI Permission or enable MIDI devices (SysEx) in your browser’s address bar settings.'}
+              </p>
+            )}
+            <div className="flex flex-wrap items-center justify-end gap-2">
+              {popup.canRequestPermission && onRequestPermission && (
+                <button
+                  type="button"
+                  disabled={permissionRequesting}
+                  onClick={onRequestPermission}
+                  className="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-semibold rounded bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-60 whitespace-nowrap transition-colors"
+                >
+                  {permissionRequesting ? (
+                    <Loader2 className="w-3.5 h-3.5 animate-spin shrink-0" />
+                  ) : (
+                    <KeyRound className="w-3.5 h-3.5 shrink-0" />
+                  )}
+                  {permissionRequesting ? 'Waiting...' : 'Request WebMIDI Permission'}
+                </button>
+              )}
+              {popup.canRequestPermission && isInIframe && (
+                <a
+                  href={typeof window !== 'undefined' ? window.location.href : '#'}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium rounded border border-[var(--md-border-strong)] bg-[var(--md-control)] text-slate-700 dark:text-slate-200 hover:bg-[var(--md-hover)] whitespace-nowrap transition-colors"
+                >
+                  <ExternalLink className="w-3.5 h-3.5 shrink-0" />
+                  Open Standalone Tab
+                </a>
+              )}
               <button
                 type="button"
                 onClick={onDismiss}
