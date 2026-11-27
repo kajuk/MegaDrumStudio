@@ -567,6 +567,12 @@ export default function App() {
               expectedCmd: MD_SYSEX_CMD.MCU_TYPE,
               label: 'MCU Type',
             },
+            {
+              kind: 'request',
+              packet: buildRequestConfigCountSysex(ch),
+              expectedCmd: MD_SYSEX_CMD.CONFIG_COUNT,
+              label: 'EEPROM Config Count',
+            },
           ],
           { maxRetries: 2, timeoutMs: 650, abortOnFirstTimeout: true }
         );
@@ -577,14 +583,20 @@ export default function App() {
         if (res.ok) {
           let fwVersion = 'Unknown';
           let mcuId = 0;
+          let updatedCfg = configRef.current;
           for (const pkt of res.responses) {
-            const decoded = applyIncomingSysexPacket(pkt, configRef.current);
+            const decoded = applyIncomingSysexPacket(pkt, updatedCfg);
             if (decoded?.cmd === MD_SYSEX_CMD.VERSION) {
               fwVersion = decoded.updated.version;
+              updatedCfg = decoded.updated;
             } else if (decoded?.cmd === MD_SYSEX_CMD.MCU_TYPE) {
               mcuId = decoded.updated.mcuTypeId;
+              updatedCfg = decoded.updated;
+            } else if (decoded?.cmd === MD_SYSEX_CMD.CONFIG_COUNT) {
+              updatedCfg = decoded.updated;
             }
           }
+          setConfig(updatedCfg);
           const latestMidi = midiRef.current;
           const inName = latestMidi.inputs.find((i) => i.id === latestMidi.selectedInputId)?.name;
           const outName = latestMidi.outputs.find((o) => o.id === latestMidi.selectedOutputId)?.name;
@@ -828,13 +840,39 @@ export default function App() {
     [enqueueLiveBlocks]
   );
 
+  const handleQueryConfigCount = useCallback(async () => {
+    const ch = configRef.current.chainId;
+    await executeQueue(
+      [
+        {
+          kind: 'request',
+          packet: buildRequestConfigCountSysex(ch),
+          expectedCmd: MD_SYSEX_CMD.CONFIG_COUNT,
+          label: 'EEPROM Config Count',
+        },
+      ],
+      () => `Synced EEPROM Config Count from MegaDrum`
+    );
+  }, [executeQueue]);
+
   const handleUpdateGlobal = useCallback(
     (patch: Partial<GlobalConfig>) => {
       setSelectedPresetId('custom');
       setConfig((prev) => ({ ...prev, global: { ...prev.global, ...patch } }));
       enqueueLiveBlocks(['global']);
+
+      if (
+        (patch.maxInputs !== undefined ||
+          patch.customPadNames !== undefined ||
+          patch.customConfigNames !== undefined) &&
+        midiRef.current.connectionPhase === 'connected'
+      ) {
+        setTimeout(() => {
+          void handleQueryConfigCount();
+        }, 300);
+      }
     },
-    [enqueueLiveBlocks]
+    [enqueueLiveBlocks, handleQueryConfigCount]
   );
 
   const handleUpdateMisc = useCallback(
@@ -1430,21 +1468,6 @@ export default function App() {
         },
       ],
       () => 'Identified connected MegaDrum Firmware Version & MCU'
-    );
-  }, [executeQueue]);
-
-  const handleQueryConfigCount = useCallback(async () => {
-    const ch = configRef.current.chainId;
-    await executeQueue(
-      [
-        {
-          kind: 'request',
-          packet: buildRequestConfigCountSysex(ch),
-          expectedCmd: MD_SYSEX_CMD.CONFIG_COUNT,
-          label: 'EEPROM Config Count',
-        },
-      ],
-      () => `Synced EEPROM Config Count from MegaDrum`
     );
   }, [executeQueue]);
 
