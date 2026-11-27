@@ -137,6 +137,8 @@ export interface GlobalConfig {
   globalMidiChannel: number; // UI convenience (stored per-pad in MD hardware)
   activeSlot: number; // 1..16
   configName: string;
+  maxConfigCount?: number;
+  configNames?: Record<number, string>;
 }
 
 // Matches MegaDrumManagerFX ConfigMisc (MD_SYSEX_MISC = 0x01)

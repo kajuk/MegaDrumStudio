@@ -201,6 +201,52 @@ export function buildLoadSlotSysex(slot0Based: number, chainId = 0): Uint8Array 
   return buildIdRequest(MD_SYSEX_CMD.CONFIG_LOAD, slot0Based, chainId);
 }
 
+export function buildRequestConfigCountSysex(chainId = 0): Uint8Array {
+  return buildShortRequest(MD_SYSEX_CMD.CONFIG_COUNT, chainId);
+}
+
+export function buildRequestConfigCurrentSysex(chainId = 0): Uint8Array {
+  return buildShortRequest(MD_SYSEX_CMD.CONFIG_CURRENT, chainId);
+}
+
+export function buildRequestConfigNameSysex(slot0Based: number, chainId = 0): Uint8Array {
+  return buildIdRequest(MD_SYSEX_CMD.CONFIG_NAME, slot0Based, chainId);
+}
+
+export function buildSaveConfigNameSysex(slot0Based: number, name: string, chainId = 0): Uint8Array {
+  const bytes: number[] = [
+    SYSEX_START,
+    MD_SYSEX,
+    chainId & 0x7f,
+    MD_SYSEX_CMD.CONFIG_NAME,
+    slot0Based & 0x7f,
+  ];
+  const trimmed = (name || '').slice(0, 16);
+  for (let i = 0; i < 16; i++) {
+    const charCode = i < trimmed.length ? trimmed.charCodeAt(i) : 0x20;
+    bytes.push(...byte2sysex(charCode));
+  }
+  bytes.push(SYSEX_END);
+  return new Uint8Array(bytes);
+}
+
+export function calculateMaxEEPROMSlots(
+  maxInputs: number,
+  customPadNames: boolean,
+  customConfigNames: boolean
+): number {
+  let count = 16;
+  if (maxInputs > 48) count = customPadNames ? 6 : 8;
+  else if (maxInputs > 36) count = customPadNames ? 8 : 10;
+  else if (maxInputs > 24) count = customPadNames ? 12 : 14;
+  else count = customPadNames ? 14 : 16;
+
+  if (customConfigNames) {
+    count = Math.max(4, count - 2);
+  }
+  return Math.max(4, Math.min(16, count));
+}
+
 // Exact 21-byte requestArmBootloader from Midi_handler.java lines 400-420
 export function buildBootloaderEnterPacket(chainId = 0): Uint8Array {
   return new Uint8Array([
@@ -761,6 +807,40 @@ export function applyIncomingSysexPacket(
       cmd,
       updated: next,
       description: `MegaDrum MCU: ${label}`,
+    };
+  }
+
+  if (cmd === MD_SYSEX_CMD.CONFIG_COUNT && packet.length >= MD_SYSEX_SIZE.CONFIG_COUNT) {
+    const count = packet[4] & 0x7f;
+    next.global.maxConfigCount = Math.max(4, Math.min(16, count));
+    return {
+      cmd,
+      updated: next,
+      description: `EEPROM Config Count: ${next.global.maxConfigCount} slots`,
+    };
+  }
+
+  if (cmd === MD_SYSEX_CMD.CONFIG_NAME && packet.length >= 6) {
+    const slot = pointer;
+    let nameStr = '';
+    for (let i = 5; i + 1 < packet.length - 1; i += 2) {
+      const code = sysex2byte(packet[i], packet[i + 1]);
+      if (code === 0 || code === 0xff) break;
+      nameStr += String.fromCharCode(code);
+    }
+    const cleaned = nameStr.trim();
+    if (!next.global.configNames) {
+      next.global.configNames = {};
+    }
+    next.global.configNames[slot + 1] = cleaned;
+    if (slot + 1 === next.global.activeSlot && cleaned) {
+      next.global.configName = cleaned;
+    }
+    return {
+      cmd,
+      id: slot + 1,
+      updated: next,
+      description: `EEPROM Slot ${slot + 1} Name: "${cleaned || 'Unnamed'}"`,
     };
   }
 

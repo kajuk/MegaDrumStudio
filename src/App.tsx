@@ -38,6 +38,9 @@ import {
   buildFullConfigSyxFile,
   buildLoadSlotSysex,
   buildRequest3rdSysex,
+  buildRequestConfigCountSysex,
+  buildRequestConfigCurrentSysex,
+  buildRequestConfigNameSysex,
   buildRequestCurveSysex,
   buildRequestGlobalMiscSysex,
   buildRequestMcuSysex,
@@ -47,6 +50,7 @@ import {
   buildRequestPedalSysex,
   buildRequestPosSysex,
   buildRequestVersionSysex,
+  buildSaveConfigNameSysex,
   buildSaveSlotSysex,
   encode3rdSysex,
   encodeCurveSysex,
@@ -1429,6 +1433,66 @@ export default function App() {
     );
   }, [executeQueue]);
 
+  const handleQueryConfigCount = useCallback(async () => {
+    const ch = configRef.current.chainId;
+    await executeQueue(
+      [
+        {
+          kind: 'request',
+          packet: buildRequestConfigCountSysex(ch),
+          expectedCmd: MD_SYSEX_CMD.CONFIG_COUNT,
+          label: 'EEPROM Config Count',
+        },
+      ],
+      () => `Synced EEPROM Config Count from MegaDrum`
+    );
+  }, [executeQueue]);
+
+  const handleQueryConfigCurrent = useCallback(async () => {
+    const ch = configRef.current.chainId;
+    await executeQueue(
+      [
+        {
+          kind: 'request',
+          packet: buildRequestConfigCurrentSysex(ch),
+          expectedCmd: MD_SYSEX_CMD.CONFIG_CURRENT,
+          label: 'Active EEPROM Slot',
+        },
+      ],
+      () => `Synced Active EEPROM Slot from MegaDrum`
+    );
+  }, [executeQueue]);
+
+  const handleReadConfigName = useCallback(async (slot: number) => {
+    const ch = configRef.current.chainId;
+    await executeQueue(
+      [
+        {
+          kind: 'request',
+          packet: buildRequestConfigNameSysex(slot - 1, ch),
+          expectedCmd: MD_SYSEX_CMD.CONFIG_NAME,
+          label: `Read Slot ${slot} Name`,
+        },
+      ],
+      () => `Read Name for EEPROM Slot ${slot}`
+    );
+  }, [executeQueue]);
+
+  const handleSaveConfigName = useCallback(async (slot: number, name: string) => {
+    const ch = configRef.current.chainId;
+    await executeQueue(
+      [
+        {
+          kind: 'fire_and_forget',
+          packet: buildSaveConfigNameSysex(slot - 1, name, ch),
+          expectedCmd: MD_SYSEX_CMD.CONFIG_NAME,
+          label: `Save Slot ${slot} Name`,
+        },
+      ],
+      () => `Saved Name for EEPROM Slot ${slot}`
+    );
+  }, [executeQueue]);
+
   const handlePrimaryTopBarAction = useCallback(async () => {
     if (midi.connectionPhase === 'connected') {
       handleDisconnectMidi();
@@ -1792,6 +1856,10 @@ export default function App() {
               setModuleSnapshot(createEmptySyncSnapshot());
             }
           }}
+          onQueryConfigCount={handleQueryConfigCount}
+          onQueryConfigCurrent={handleQueryConfigCurrent}
+          onReadConfigName={handleReadConfigName}
+          onSaveConfigName={handleSaveConfigName}
           onExportMds={handleExportMds}
           onExportSyx={handleExportSyx}
           onExportJson={handleExportJson}

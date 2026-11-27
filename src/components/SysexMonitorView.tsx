@@ -13,6 +13,7 @@ import {
 import { MD_MCU_TYPES, MegaDrumConfig, MidiEventLog } from '../types/megadrum';
 import { decodeMidiLogDetails, normalizeHexBytes } from '../utils/midiLogFormat';
 import { buildFullConfigSyxFile, formatBytesHex } from '../utils/sysex';
+import { calculateMaxEEPROMSlots } from '../utils/sysex';
 import { FirmwareUpgradePanel } from './FirmwareUpgradePanel';
 
 interface SysexMonitorViewProps {
@@ -26,6 +27,10 @@ interface SysexMonitorViewProps {
   onSendAllToModule: () => void;
   onSaveToSlot: (slot: number) => void;
   onLoadFromSlot: (slot: number) => void;
+  onQueryConfigCount: () => void;
+  onQueryConfigCurrent: () => void;
+  onReadConfigName: (slot: number) => void;
+  onSaveConfigName: (slot: number, name: string) => void;
   onExportMds: () => void;
   onExportSyx: () => void;
   onExportJson: () => void;
@@ -51,6 +56,10 @@ export const SysexMonitorView: React.FC<SysexMonitorViewProps> = ({
   onSendAllToModule,
   onSaveToSlot,
   onLoadFromSlot,
+  onQueryConfigCount,
+  onQueryConfigCurrent,
+  onReadConfigName,
+  onSaveConfigName,
   onExportMds,
   onExportSyx,
   onExportJson,
@@ -63,6 +72,30 @@ export const SysexMonitorView: React.FC<SysexMonitorViewProps> = ({
   const [subTab, setSubTab] = useState<'sysex' | 'firmware'>('sysex');
   const [filterType, setFilterType] = useState<'all' | 'sysex' | 'note' | 'cc' | 'error'>('all');
   const [selectedSlot, setSelectedSlot] = useState<number>(config.global.activeSlot);
+  const maxSlots = useMemo(() => {
+    if (config.global.maxConfigCount && config.global.maxConfigCount >= 4) {
+      return config.global.maxConfigCount;
+    }
+    return calculateMaxEEPROMSlots(
+      config.global.maxInputs,
+      config.global.customPadNames,
+      config.global.customConfigNames
+    );
+  }, [
+    config.global.maxConfigCount,
+    config.global.maxInputs,
+    config.global.customPadNames,
+    config.global.customConfigNames,
+  ]);
+
+  const [slotNameInput, setSlotNameInput] = useState<string>(
+    config.global.configNames?.[selectedSlot] || ''
+  );
+
+  React.useEffect(() => {
+    setSlotNameInput(config.global.configNames?.[selectedSlot] || '');
+  }, [selectedSlot, config.global.configNames]);
+
   const [expandedLogId, setExpandedLogId] = useState<string | null>(null);
   const [copiedLogId, setCopiedLogId] = useState<string | null>(null);
 
@@ -226,27 +259,97 @@ export const SysexMonitorView: React.FC<SysexMonitorViewProps> = ({
         ) : (
           <>
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-              {/* EEPROM Slots */}
+              {/* EEPROM Slots & Hardware Slot Naming */}
               <section className="border border-[var(--md-border)] rounded-lg bg-[var(--md-panel)] p-5 space-y-4">
-                <h2 className="text-sm font-display font-semibold text-slate-900 dark:text-white border-b border-slate-100 dark:border-slate-800 pb-3">
-                  Module EEPROM Config Slots (1–16)
-                </h2>
-                <div className="grid grid-cols-4 sm:grid-cols-8 gap-1.5">
-                  {Array.from({ length: 16 }, (_, i) => i + 1).map((slot) => (
+                <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 dark:border-slate-800 pb-3">
+                  <div>
+                    <h2 className="text-sm font-display font-semibold text-slate-900 dark:text-white">
+                      Module EEPROM Config Slots (1–{maxSlots})
+                    </h2>
+                    <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                      Capacity depends on inputs ({config.global.maxInputs}) &amp; custom names ({config.global.customPadNames ? 'On' : 'Off'})
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-2">
                     <button
-                      key={slot}
                       type="button"
-                      onClick={() => setSelectedSlot(slot)}
-                      className={`py-2 text-xs font-mono tabular-nums rounded border transition-colors ${
-                        selectedSlot === slot
-                          ? 'bg-blue-600 text-white border-blue-600 font-semibold'
-                          : 'bg-slate-50 dark:bg-[#0B0E14] border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300 hover:border-blue-400'
-                      }`}
+                      onClick={onQueryConfigCount}
+                      className="px-2 py-1 text-[11px] font-medium rounded border border-[var(--md-border-strong)] bg-[var(--md-control)] text-slate-700 dark:text-slate-200 hover:bg-[var(--md-hover)]"
+                      title="Query Config Count (SysEx 0x0E)"
                     >
-                      {String(slot).padStart(2, '0')}
+                      Query Count (0x0E)
                     </button>
-                  ))}
+                    <button
+                      type="button"
+                      onClick={onQueryConfigCurrent}
+                      className="px-2 py-1 text-[11px] font-medium rounded border border-[var(--md-border-strong)] bg-[var(--md-control)] text-slate-700 dark:text-slate-200 hover:bg-[var(--md-hover)]"
+                      title="Query Active Slot (SysEx 0x10)"
+                    >
+                      Query Active (0x10)
+                    </button>
+                  </div>
                 </div>
+
+                <div className="grid grid-cols-4 sm:grid-cols-8 gap-1.5">
+                  {Array.from({ length: maxSlots }, (_, i) => i + 1).map((slot) => {
+                    const isActive = config.global.activeSlot === slot;
+                    const isSelected = selectedSlot === slot;
+                    return (
+                      <button
+                        key={slot}
+                        type="button"
+                        onClick={() => setSelectedSlot(slot)}
+                        className={`p-2 text-xs font-mono tabular-nums rounded border transition-colors relative flex flex-col items-center justify-center ${
+                          isSelected
+                            ? 'bg-blue-600 text-white border-blue-600 font-semibold shadow-xs'
+                            : 'bg-slate-50 dark:bg-[#0B0E14] border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300 hover:border-blue-400'
+                        }`}
+                      >
+                        <span className="text-[11px] font-semibold">{String(slot).padStart(2, '0')}</span>
+                        {isActive && (
+                          <span className="absolute -top-1 -right-1 w-2.5 h-2.5 rounded-full bg-emerald-500 ring-2 ring-white dark:ring-[#0B0E14]" title="Active Slot on MegaDrum" />
+                        )}
+                      </button>
+                    );
+                  })}
+                </div>
+
+                {/* Selected Slot Configuration & Name Editor */}
+                <div className="p-3 rounded-lg bg-[var(--md-inset)] border border-[var(--md-border)] space-y-3">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <span className="text-xs font-semibold text-slate-800 dark:text-slate-200">
+                      Slot {selectedSlot} {config.global.activeSlot === selectedSlot ? '(Active)' : ''}
+                    </span>
+                    <div className="flex items-center gap-1.5">
+                      <button
+                        type="button"
+                        onClick={() => onReadConfigName(selectedSlot)}
+                        className="px-2 py-1 text-[11px] font-medium rounded border border-[var(--md-border-strong)] bg-[var(--md-control)] text-slate-700 dark:text-slate-200 hover:bg-[var(--md-hover)]"
+                      >
+                        Read Name (0x0D)
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="text"
+                      value={slotNameInput}
+                      onChange={(e) => setSlotNameInput(e.target.value)}
+                      placeholder={`Slot ${selectedSlot} custom name (max 16 chars)`}
+                      maxLength={16}
+                      className="flex-1 px-2.5 py-1 text-xs rounded border border-[var(--md-border-strong)] bg-[var(--md-control)] text-slate-900 dark:text-white"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => onSaveConfigName(selectedSlot, slotNameInput)}
+                      className="px-3 py-1 text-xs font-medium rounded bg-blue-600 text-white hover:bg-blue-700 whitespace-nowrap"
+                    >
+                      Save Name
+                    </button>
+                  </div>
+                </div>
+
                 <div className="flex flex-wrap items-center justify-between gap-3 pt-1">
                   <span className="text-xs text-slate-500 dark:text-slate-400">
                     {midiConnected
