@@ -812,7 +812,7 @@ export function applyIncomingSysexPacket(
 
   if (cmd === MD_SYSEX_CMD.CONFIG_COUNT && packet.length >= MD_SYSEX_SIZE.CONFIG_COUNT) {
     const count = packet[4] & 0x7f;
-    next.global.maxConfigCount = Math.max(4, Math.min(16, count));
+    next.global.maxConfigCount = Math.max(4, Math.min(64, count));
     return {
       cmd,
       updated: next,
