@@ -378,12 +378,12 @@ export const KitPadsView: React.FC<KitPadsViewProps> = ({
                     <button
                       type="button"
                       onClick={() => setShowKitMap((v) => !v)}
-                      className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium rounded border border-[var(--md-border-strong)] bg-[var(--md-control)] text-slate-700 dark:text-slate-200 hover:bg-[var(--md-hover)] transition-colors whitespace-nowrap"
+                      className="inline-flex items-center justify-center gap-1.5 w-[116px] px-2.5 py-1.5 text-xs font-medium rounded border border-[var(--md-border-strong)] bg-[var(--md-control)] text-slate-700 dark:text-slate-200 hover:bg-[var(--md-hover)] transition-colors whitespace-nowrap"
                     >
                       {showKitMap ? (
-                        <EyeOff className="w-3.5 h-3.5" />
+                        <EyeOff className="w-3.5 h-3.5 shrink-0" />
                       ) : (
-                        <Eye className="w-3.5 h-3.5" />
+                        <Eye className="w-3.5 h-3.5 shrink-0" />
                       )}
                       {showKitMap ? 'Hide Kit Map' : 'Show Kit Map'}
                     </button>
@@ -391,14 +391,14 @@ export const KitPadsView: React.FC<KitPadsViewProps> = ({
                     <button
                       type="button"
                       onClick={() => onRequestPairSysex(selectedPairIndex)}
-                      className="inline-flex items-center justify-center min-w-[74px] px-2.5 py-1.5 text-xs font-medium rounded border border-[var(--md-border-strong)] bg-[var(--md-control)] text-slate-700 dark:text-slate-200 hover:bg-[var(--md-hover)] transition-colors whitespace-nowrap"
+                      className="inline-flex items-center justify-center w-[82px] px-2.5 py-1.5 text-xs font-medium rounded border border-[var(--md-border-strong)] bg-[var(--md-control)] text-slate-700 dark:text-slate-200 hover:bg-[var(--md-hover)] transition-colors whitespace-nowrap"
                     >
                       {isKick ? 'Get Input' : 'Get Pair'}
                     </button>
                     <button
                       type="button"
                       onClick={() => onSendPairSysex(selectedPairIndex)}
-                      className={`inline-flex items-center justify-center min-w-[82px] px-2.5 py-1.5 text-xs font-semibold rounded text-white transition-colors whitespace-nowrap ${
+                      className={`inline-flex items-center justify-center w-[108px] px-2.5 py-1.5 text-xs font-semibold rounded text-white transition-colors whitespace-nowrap tabular-nums ${
                         pairSyncSummary.state === 'modified'
                           ? 'bg-amber-600 hover:bg-amber-700'
                           : 'bg-blue-600 hover:bg-blue-700'
@@ -414,9 +414,9 @@ export const KitPadsView: React.FC<KitPadsViewProps> = ({
                     <button
                       type="button"
                       onClick={() => onTriggerPad(leftPad.id, 'head')}
-                      className="inline-flex items-center justify-center gap-1.5 min-w-[92px] px-2.5 py-1.5 text-xs font-medium rounded border border-[var(--md-border-strong)] bg-[var(--md-control)] text-slate-700 dark:text-slate-200 hover:bg-[var(--md-hover)] transition-colors whitespace-nowrap"
+                      className="inline-flex items-center justify-center gap-1.5 w-[108px] px-2.5 py-1.5 text-xs font-medium rounded border border-[var(--md-border-strong)] bg-[var(--md-control)] text-slate-700 dark:text-slate-200 hover:bg-[var(--md-hover)] transition-colors whitespace-nowrap"
                     >
-                      <Zap className="w-3.5 h-3.5 text-amber-500" />
+                      <Zap className="w-3.5 h-3.5 text-amber-500 shrink-0" />
                       {isKick ? 'Audition' : 'Head/Bow'}
                     </button>
 
