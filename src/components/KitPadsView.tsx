@@ -367,77 +367,102 @@ export const KitPadsView: React.FC<KitPadsViewProps> = ({
                   : `Pair ${String(selectedPairIndex).padStart(2, '0')} (In ${leftPad.id} + In ${rightPad?.id ?? leftPad.id + 1}) — ${leftPad.name.replace(/\s+(Head|Bow)$/i, '')}`}
               </h1>
 
-              <div className="flex flex-wrap items-center gap-2 shrink-0">
-                <button
-                  type="button"
-                  onClick={() => setShowKitMap((v) => !v)}
-                  className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded border border-[var(--md-border-strong)] bg-[var(--md-control)] text-slate-700 dark:text-slate-200 hover:bg-[var(--md-hover)] transition-colors whitespace-nowrap"
-                >
-                  {showKitMap ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
-                  {showKitMap ? 'Hide Kit Map' : 'Show Kit Map'}
-                </button>
+              {(() => {
+                const canAuditionRim = Boolean(
+                  !isKick && rightPad && currentMode !== 'single' && !rightPad.disabled
+                );
+                const canAuditionBell = Boolean(!isKick && thirdZone && !thirdZone.disabled);
 
-                <button
-                  type="button"
-                  onClick={() => onRequestPairSysex(selectedPairIndex)}
-                  className="px-3 py-1.5 text-xs font-medium rounded border border-[var(--md-border-strong)] bg-[var(--md-control)] text-slate-700 dark:text-slate-200 hover:bg-[var(--md-hover)] transition-colors whitespace-nowrap"
-                >
-                  {isKick ? 'Get Input' : 'Get Pair'}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => onSendPairSysex(selectedPairIndex)}
-                  className={`px-3 py-1.5 text-xs font-semibold rounded text-white transition-colors whitespace-nowrap ${
-                    pairSyncSummary.state === 'modified'
-                      ? 'bg-amber-600 hover:bg-amber-700'
-                      : 'bg-blue-600 hover:bg-blue-700'
-                  }`}
-                >
-                  {pairSyncSummary.state === 'modified'
-                    ? `${isKick ? 'Send Input' : 'Send Pair'} (${pairSyncSummary.diffCount})`
-                    : isKick
-                    ? 'Send Input'
-                    : 'Send Pair'}
-                </button>
+                return (
+                  <div className="flex flex-wrap items-center gap-1.5 shrink-0">
+                    <button
+                      type="button"
+                      onClick={() => setShowKitMap((v) => !v)}
+                      className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium rounded border border-[var(--md-border-strong)] bg-[var(--md-control)] text-slate-700 dark:text-slate-200 hover:bg-[var(--md-hover)] transition-colors whitespace-nowrap"
+                    >
+                      {showKitMap ? (
+                        <EyeOff className="w-3.5 h-3.5" />
+                      ) : (
+                        <Eye className="w-3.5 h-3.5" />
+                      )}
+                      {showKitMap ? 'Hide Kit Map' : 'Show Kit Map'}
+                    </button>
 
-                <button
-                  type="button"
-                  onClick={() => onTriggerPad(leftPad.id, 'head')}
-                  className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded border border-[var(--md-border-strong)] bg-[var(--md-control)] text-slate-700 dark:text-slate-200 hover:bg-[var(--md-hover)] transition-colors whitespace-nowrap"
-                >
-                  <Zap className="w-3.5 h-3.5 text-amber-500" />
-                  {isKick ? 'Audition' : 'Head/Bow'}
-                </button>
+                    <button
+                      type="button"
+                      onClick={() => onRequestPairSysex(selectedPairIndex)}
+                      className="inline-flex items-center justify-center min-w-[74px] px-2.5 py-1.5 text-xs font-medium rounded border border-[var(--md-border-strong)] bg-[var(--md-control)] text-slate-700 dark:text-slate-200 hover:bg-[var(--md-hover)] transition-colors whitespace-nowrap"
+                    >
+                      {isKick ? 'Get Input' : 'Get Pair'}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => onSendPairSysex(selectedPairIndex)}
+                      className={`inline-flex items-center justify-center min-w-[82px] px-2.5 py-1.5 text-xs font-semibold rounded text-white transition-colors whitespace-nowrap ${
+                        pairSyncSummary.state === 'modified'
+                          ? 'bg-amber-600 hover:bg-amber-700'
+                          : 'bg-blue-600 hover:bg-blue-700'
+                      }`}
+                    >
+                      {pairSyncSummary.state === 'modified'
+                        ? `${isKick ? 'Send Input' : 'Send Pair'} (${pairSyncSummary.diffCount})`
+                        : isKick
+                        ? 'Send Input'
+                        : 'Send Pair'}
+                    </button>
 
-                {!isKick && rightPad && currentMode !== 'single' && (
-                  <button
-                    type="button"
-                    onClick={() => onTriggerPad(rightPad.id, 'rim')}
-                    className="px-3 py-1.5 text-xs font-medium rounded border border-[var(--md-border-strong)] bg-[var(--md-control)] text-slate-700 dark:text-slate-200 hover:bg-[var(--md-hover)] transition-colors whitespace-nowrap"
-                  >
-                    Rim/Edge
-                  </button>
-                )}
+                    <button
+                      type="button"
+                      onClick={() => onTriggerPad(leftPad.id, 'head')}
+                      className="inline-flex items-center justify-center gap-1.5 min-w-[92px] px-2.5 py-1.5 text-xs font-medium rounded border border-[var(--md-border-strong)] bg-[var(--md-control)] text-slate-700 dark:text-slate-200 hover:bg-[var(--md-hover)] transition-colors whitespace-nowrap"
+                    >
+                      <Zap className="w-3.5 h-3.5 text-amber-500" />
+                      {isKick ? 'Audition' : 'Head/Bow'}
+                    </button>
 
-                {!isKick && thirdZone && !thirdZone.disabled && (
-                  <button
-                    type="button"
-                    onClick={() => onTriggerPad(leftPad.id, 'bell')}
-                    className="px-3 py-1.5 text-xs font-medium rounded border border-[var(--md-border-strong)] bg-[var(--md-control)] text-slate-700 dark:text-slate-200 hover:bg-[var(--md-hover)] transition-colors whitespace-nowrap"
-                  >
-                    Bell (3rd)
-                  </button>
-                )}
+                    <button
+                      type="button"
+                      disabled={!canAuditionRim}
+                      onClick={() => rightPad && onTriggerPad(rightPad.id, 'rim')}
+                      title={
+                        canAuditionRim
+                          ? 'Audition Rim / Edge zone'
+                          : isKick
+                          ? 'Rim/Edge is not available on single Kick input'
+                          : 'Switch pad to a Dual or 3-Way mode to audition Rim/Edge'
+                      }
+                      className="px-2.5 py-1.5 text-xs font-medium rounded border border-[var(--md-border-strong)] bg-[var(--md-control)] text-slate-700 dark:text-slate-200 hover:bg-[var(--md-hover)] disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-[var(--md-control)] transition-colors whitespace-nowrap"
+                    >
+                      Rim/Edge
+                    </button>
 
-                <button
-                  type="button"
-                  onClick={() => onResetPair(selectedPairIndex)}
-                  title="Reset pair to factory defaults"
-                  className="p-1.5 rounded border border-[var(--md-border-strong)] bg-[var(--md-control)] text-slate-500 hover:text-slate-900 dark:text-slate-400 dark:hover:text-white transition-colors"
-                >
-                  <RotateCcw className="w-3.5 h-3.5" />
-                </button>
-              </div>
+                    <button
+                      type="button"
+                      disabled={!canAuditionBell}
+                      onClick={() => onTriggerPad(leftPad.id, 'bell')}
+                      title={
+                        canAuditionBell
+                          ? 'Audition 3rd Zone (Bell)'
+                          : isKick
+                          ? '3rd Zone (Bell) is not available on single Kick input'
+                          : 'Enable 3rd Zone below to audition Bell'
+                      }
+                      className="px-2.5 py-1.5 text-xs font-medium rounded border border-[var(--md-border-strong)] bg-[var(--md-control)] text-slate-700 dark:text-slate-200 hover:bg-[var(--md-hover)] disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-[var(--md-control)] transition-colors whitespace-nowrap"
+                    >
+                      Bell (3rd)
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => onResetPair(selectedPairIndex)}
+                      title="Reset pair to factory defaults"
+                      className="p-1.5 rounded border border-[var(--md-border-strong)] bg-[var(--md-control)] text-slate-500 hover:text-slate-900 dark:text-slate-400 dark:hover:text-white transition-colors"
+                    >
+                      <RotateCcw className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                );
+              })()}
             </div>
 
             <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1 min-h-5">
