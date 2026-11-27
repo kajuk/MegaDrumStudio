@@ -1,12 +1,14 @@
 import React, { useMemo, useState } from 'react';
-import { ArrowDownToLine, ArrowUpFromLine, Download, Trash2 } from 'lucide-react';
-import { MegaDrumConfig, MidiEventLog } from '../types/megadrum';
+import { ArrowDownToLine, ArrowUpFromLine, Cpu, Download, HardDrive, RefreshCw, Trash2 } from 'lucide-react';
+import { MD_MCU_TYPES, MegaDrumConfig, MidiEventLog } from '../types/megadrum';
 import { buildFullConfigSyxFile, formatBytesHex } from '../utils/sysex';
 import { FirmwareUpgradePanel } from './FirmwareUpgradePanel';
 
 interface SysexMonitorViewProps {
   config: MegaDrumConfig;
   midiConnected: boolean;
+  detectedVersion?: string | null;
+  detectedMcuTypeId?: number | null;
   logs: MidiEventLog[];
   onClearLogs: () => void;
   onGetAllFromModule: () => void;
@@ -30,6 +32,8 @@ interface SysexMonitorViewProps {
 export const SysexMonitorView: React.FC<SysexMonitorViewProps> = ({
   config,
   midiConnected,
+  detectedVersion = null,
+  detectedMcuTypeId = null,
   logs,
   onClearLogs,
   onGetAllFromModule,
@@ -48,6 +52,13 @@ export const SysexMonitorView: React.FC<SysexMonitorViewProps> = ({
   const [subTab, setSubTab] = useState<'sysex' | 'firmware'>('sysex');
   const [filterType, setFilterType] = useState<'all' | 'sysex' | 'note' | 'cc' | 'error'>('all');
   const [selectedSlot, setSelectedSlot] = useState<number>(config.global.activeSlot);
+  const displayVersion = midiConnected && detectedVersion ? detectedVersion : 'Unknown';
+  const displayMcuId =
+    midiConnected && detectedMcuTypeId !== null ? detectedMcuTypeId : 0;
+  const mcuName =
+    displayMcuId === 0
+      ? 'Unknown'
+      : MD_MCU_TYPES[displayMcuId] || `Unknown (${displayMcuId})`;
 
   const filteredLogs = useMemo(() => {
     if (filterType === 'all') return logs;
@@ -127,13 +138,64 @@ export const SysexMonitorView: React.FC<SysexMonitorViewProps> = ({
           </div>
         </div>
 
+        {/* Always-Visible Firmware & Hardware Module Info */}
+        <div className="px-4 py-2.5 rounded-lg border border-[var(--md-border)] bg-[var(--md-panel)] flex flex-wrap items-center justify-between gap-3 text-xs">
+          <div className="flex flex-wrap items-center gap-x-5 gap-y-1.5">
+            <div className="inline-flex items-center gap-1.5 text-slate-600 dark:text-slate-300">
+              <HardDrive className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400 shrink-0" />
+              <span>Firmware:</span>
+              <strong
+                className={`font-mono tabular-nums ${
+                  displayVersion === 'Unknown'
+                    ? 'text-slate-500 dark:text-slate-400'
+                    : 'text-slate-900 dark:text-white'
+                }`}
+              >
+                {displayVersion}
+              </strong>
+            </div>
+            <span className="text-slate-300 dark:text-slate-700" aria-hidden="true">
+              ·
+            </span>
+            <div className="inline-flex items-center gap-1.5 text-slate-600 dark:text-slate-300">
+              <Cpu className="w-3.5 h-3.5 text-indigo-600 dark:text-indigo-400 shrink-0" />
+              <span>Hardware (MCU):</span>
+              <strong
+                className={`font-mono tabular-nums ${
+                  mcuName === 'Unknown'
+                    ? 'text-slate-500 dark:text-slate-400'
+                    : 'text-slate-900 dark:text-white'
+                }`}
+              >
+                {mcuName}
+              </strong>
+            </div>
+            <span className="text-slate-300 dark:text-slate-700" aria-hidden="true">
+              ·
+            </span>
+            <span className="font-mono tabular-nums text-slate-500 dark:text-slate-400">
+              Chain ID {config.chainId}
+            </span>
+          </div>
+
+          <button
+            type="button"
+            onClick={onQueryHardware}
+            title="Query connected MegaDrum Firmware Version & Hardware MCU via SysEx"
+            className="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium rounded border border-[var(--md-border-strong)] bg-[var(--md-control)] text-slate-700 dark:text-slate-200 hover:bg-[var(--md-hover)] whitespace-nowrap"
+          >
+            <RefreshCw className="w-3 h-3 text-blue-600 dark:text-blue-400 shrink-0" />
+            Query FW &amp; MCU
+          </button>
+        </div>
+
         {subTab === 'firmware' ? (
           <FirmwareUpgradePanel
             midiConnected={midiConnected}
             chainId={config.chainId}
-            mcuTypeId={config.mcuTypeId}
+            mcuTypeId={displayMcuId}
             configuredInputs={config.global.maxInputs}
-            currentVersion={config.version}
+            currentVersion={displayVersion}
             onQueryHardware={onQueryHardware}
             onSendBootloaderEnter={onSendBootloaderEnter}
             onSendFirmwareFrameWithAck={onSendFirmwareFrameWithAck}

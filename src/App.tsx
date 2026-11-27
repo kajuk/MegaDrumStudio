@@ -7,11 +7,16 @@ import { CurvesView } from './components/CurvesView';
 import { GlobalMiscView } from './components/GlobalMiscView';
 import { MidiLogView } from './components/MidiLogView';
 import { SysexMonitorView } from './components/SysexMonitorView';
+import {
+  ConnectionPopupData,
+  ConnectionStatusPopup,
+} from './components/ConnectionStatusPopup';
 import { cloneConfig, FACTORY_PRESETS } from './data/presets';
 import { SysexBatchResult, SysexTaskItem, useWebMidi } from './hooks/useWebMidi';
 import {
   ActiveHit,
   GlobalConfig,
+  MD_MCU_TYPES,
   MegaDrumConfig,
   MiscConfig,
   ModuleSyncSnapshot,
@@ -131,6 +136,12 @@ export default function App() {
   const [lastRawAdc, setLastRawAdc] = useState<number | null>(null);
   const [syncFlash, setSyncFlash] = useState<boolean>(false);
   const [notice, setNotice] = useState<{ text: string; isError?: boolean } | null>(null);
+  const [connectionPopup, setConnectionPopup] = useState<ConnectionPopupData | null>(null);
+  const [connectTriggerId, setConnectTriggerId] = useState<number>(0);
+  const [detectedHardware, setDetectedHardware] = useState<{
+    version: string | null;
+    mcuTypeId: number | null;
+  }>({ version: null, mcuTypeId: null });
   const [liveUpdates, setLiveUpdates] = useState<boolean>(() => {
     try {
       return localStorage.getItem(LIVE_UPDATES_STORAGE_KEY) === 'true';
@@ -139,6 +150,7 @@ export default function App() {
     }
   });
   const inBatchRef = useRef<boolean>(false);
+  const pendingIdentifyPopupRef = useRef<boolean>(false);
   const liveUpdatesRef = useRef<boolean>(liveUpdates);
   liveUpdatesRef.current = liveUpdates;
   const dirtyBlocksRef = useRef<Set<string>>(new Set());
@@ -192,6 +204,11 @@ export default function App() {
       if (res) {
         if (res.pedalRawLevel !== undefined) {
           setLastRawAdc(res.pedalRawLevel);
+        }
+        if (res.cmd === MD_SYSEX_CMD.VERSION) {
+          setDetectedHardware((prev) => ({ ...prev, version: res.updated.version }));
+        } else if (res.cmd === MD_SYSEX_CMD.MCU_TYPE) {
+          setDetectedHardware((prev) => ({ ...prev, mcuTypeId: res.updated.mcuTypeId }));
         }
         if (!liveSendInFlightRef.current) {
           setConfig(res.updated);
@@ -470,11 +487,134 @@ export default function App() {
     [midi, showNotice]
   );
 
+  const midiRef = useRef(midi);
+  midiRef.current = midi;
+
+  const handleDismissConnectionPopup = useCallback(() => {
+    setConnectionPopup(null);
+  }, []);
+
+  const handleDisconnectMidi = useCallback(() => {
+    pendingIdentifyPopupRef.current = false;
+    setConnectionPopup(null);
+    setDetectedHardware({ version: null, mcuTypeId: null });
+    midiRef.current.disconnect();
+  }, []);
+
+  useEffect(() => {
+    if (!midi.connected) {
+      setDetectedHardware({ version: null, mcuTypeId: null });
+    }
+  }, [midi.connected]);
+
   const handleConnectMidi = useCallback(async () => {
+    setConnectionPopup(null);
     const result = await midi.connect();
     showNotice(result.message, !result.ok);
+    if (!result.ok) {
+      pendingIdentifyPopupRef.current = false;
+      setConnectionPopup({
+        id: Date.now(),
+        status: 'error',
+        title: 'Failed to Connect to MegaDrum',
+        message: result.message,
+      });
+    } else {
+      pendingIdentifyPopupRef.current = true;
+      setConnectTriggerId((c) => c + 1);
+    }
     return result;
   }, [midi, showNotice]);
+
+  useEffect(() => {
+    if (!pendingIdentifyPopupRef.current || connectTriggerId === 0) return;
+
+    if (midi.connectionPhase === 'connected') {
+      pendingIdentifyPopupRef.current = false;
+
+      const identifyConnectedMegaDrum = async () => {
+        const currentMidi = midiRef.current;
+        const ch = configRef.current.chainId;
+        inBatchRef.current = true;
+        const res = await currentMidi.runSysexQueue(
+          [
+            {
+              kind: 'request',
+              packet: buildRequestVersionSysex(ch),
+              expectedCmd: MD_SYSEX_CMD.VERSION,
+              label: 'Firmware Version',
+            },
+            {
+              kind: 'request',
+              packet: buildRequestMcuSysex(ch),
+              expectedCmd: MD_SYSEX_CMD.MCU_TYPE,
+              label: 'MCU Type',
+            },
+          ],
+          { maxRetries: 2, timeoutMs: 650, abortOnFirstTimeout: true }
+        );
+        inBatchRef.current = false;
+
+        if (midiRef.current.connectionPhase !== 'connected') return;
+
+        if (res.ok) {
+          let fwVersion = 'Unknown';
+          let mcuId = 0;
+          for (const pkt of res.responses) {
+            const decoded = applyIncomingSysexPacket(pkt, configRef.current);
+            if (decoded?.cmd === MD_SYSEX_CMD.VERSION) {
+              fwVersion = decoded.updated.version;
+            } else if (decoded?.cmd === MD_SYSEX_CMD.MCU_TYPE) {
+              mcuId = decoded.updated.mcuTypeId;
+            }
+          }
+          const latestMidi = midiRef.current;
+          const inName = latestMidi.inputs.find((i) => i.id === latestMidi.selectedInputId)?.name;
+          const outName = latestMidi.outputs.find((o) => o.id === latestMidi.selectedOutputId)?.name;
+          const portsLabel =
+            inName && outName ? `${inName} / ${outName}` : inName || outName || undefined;
+
+          setConnectionPopup({
+            id: Date.now(),
+            status: 'success',
+            firmwareVersion: fwVersion,
+            hardwareName: MD_MCU_TYPES[mcuId] || `Unknown (${mcuId})`,
+            chainId: ch,
+            portsLabel,
+          });
+        } else {
+          const errMsg =
+            res.reason === 'timeout'
+              ? `MIDI ports opened, but MegaDrum did not respond to Firmware/Hardware identification (${res.failedLabel || 'Version'}). Check USB/MIDI ports, power, and Chain ID (${ch}).`
+              : 'MIDI ports opened, but could not verify MegaDrum Firmware and Hardware version.';
+          setConnectionPopup({
+            id: Date.now(),
+            status: 'error',
+            title: 'MegaDrum Not Responding',
+            message: errMsg,
+          });
+        }
+      };
+
+      void identifyConnectedMegaDrum();
+      return;
+    }
+
+    if (
+      midi.connectionPhase === 'partial' ||
+      midi.connectionPhase === 'sysex_blocked' ||
+      midi.connectionPhase === 'no_ports' ||
+      midi.connectionPhase === 'error'
+    ) {
+      pendingIdentifyPopupRef.current = false;
+      setConnectionPopup({
+        id: Date.now(),
+        status: 'error',
+        title: 'Failed to Connect to MegaDrum',
+        message: midiRef.current.connectionMessage,
+      });
+    }
+  }, [connectTriggerId, midi.connectionPhase]);
 
   // Trigger pad audition sound
   const handleTriggerPad = useCallback(
@@ -690,6 +830,7 @@ export default function App() {
   const handleUpdateChainId = useCallback((chainId: number) => {
     setConfig((prev) => ({ ...prev, chainId: Math.max(0, Math.min(3, chainId)) }));
     setModuleSnapshot(createEmptySyncSnapshot());
+    setDetectedHardware({ version: null, mcuTypeId: null });
   }, []);
 
   const handleRevertPairToModule = useCallback(
@@ -1275,12 +1416,12 @@ export default function App() {
 
   const handlePrimaryTopBarAction = useCallback(async () => {
     if (midi.connectionPhase === 'connected') {
-      midi.disconnect();
+      handleDisconnectMidi();
       showNotice('MIDI disconnected');
     } else {
       await handleConnectMidi();
     }
-  }, [handleConnectMidi, midi, showNotice]);
+  }, [handleConnectMidi, handleDisconnectMidi, midi.connectionPhase, showNotice]);
 
   const handleImportFile = useCallback(
     async (file: File) => {
@@ -1383,7 +1524,7 @@ export default function App() {
         onSelectOutput={midi.setSelectedOutputId}
         onScanPorts={midi.scanPorts}
         onConnectMidi={handleConnectMidi}
-        onDisconnectMidi={midi.disconnect}
+        onDisconnectMidi={handleDisconnectMidi}
         onGetAll={handleGetAllFromModule}
         onSendAll={handleSendAllToModule}
         liveUpdates={liveUpdates}
@@ -1477,8 +1618,16 @@ export default function App() {
           miscConfig={config.misc}
           syncSnapshot={moduleSnapshot}
           chainId={config.chainId}
-          version={config.version}
-          mcuTypeId={config.mcuTypeId}
+          version={
+            midi.connected && detectedHardware.version
+              ? detectedHardware.version
+              : 'Unknown'
+          }
+          mcuTypeId={
+            midi.connected && detectedHardware.mcuTypeId !== null
+              ? detectedHardware.mcuTypeId
+              : 0
+          }
           theme={theme}
           effectiveTheme={effectiveTheme}
           onSelectTheme={setTheme}
@@ -1514,6 +1663,8 @@ export default function App() {
         <SysexMonitorView
           config={config}
           midiConnected={midi.connected}
+          detectedVersion={detectedHardware.version}
+          detectedMcuTypeId={detectedHardware.mcuTypeId}
           logs={midi.midiLogs}
           onClearLogs={midi.clearLogs}
           onOpenMidiLog={() => setActiveTab('log')}
@@ -1557,6 +1708,11 @@ export default function App() {
           onNotice={(msg) => showNotice(msg)}
         />
       )}
+
+      <ConnectionStatusPopup
+        popup={connectionPopup}
+        onDismiss={handleDismissConnectionPopup}
+      />
 
       {notice && (
         <div
